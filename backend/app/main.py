@@ -18,8 +18,10 @@ MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 THUMBS = 16
 ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
-app = FastAPI(title="ClipTrim HD")
+app = FastAPI(title="ClipTrim HD Studio")
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+from . import studio_routes
+app.include_router(studio_routes.router)
 JOBS: dict[str, dict] = {}
 pool = ThreadPoolExecutor(config.WORKERS)
 
@@ -323,11 +325,16 @@ def job_download(job_id: str):
 def _janitor():
     while True:
         time.sleep(600)
-        for d in config.DATA_DIR.iterdir():
-            if d.is_dir() and time.time() - d.stat().st_mtime > config.TTL_HOURS * 3600:
-                shutil.rmtree(d, ignore_errors=True)
-        for k in [k for k, j in JOBS.items() if not j["out"].parent.exists()]:
-            JOBS.pop(k, None)
+        try:
+            for d in config.DATA_DIR.iterdir():
+                # Only purge transient directories, never studio databases, music, or exports
+                is_transient = ID_RE.match(d.name) or d.name.startswith("assess_") or d.name.startswith("tmp_") or d.name.startswith("gdrive_")
+                if d.is_dir() and is_transient and (time.time() - d.stat().st_mtime > config.TTL_HOURS * 3600):
+                    shutil.rmtree(d, ignore_errors=True)
+            for k in [k for k, j in JOBS.items() if not j["out"].parent.exists()]:
+                JOBS.pop(k, None)
+        except Exception:
+            pass
 
 
 threading.Thread(target=_janitor, daemon=True).start()
