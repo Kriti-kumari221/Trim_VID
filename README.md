@@ -1,5 +1,4 @@
-<<<<<<< HEAD
-# ClipTrim HD
+# ClipTrim HD (Trim_VID)
 Trim videos in the browser UI; FFmpeg does the real work on a FastAPI backend.
 
 **Stack:** React + TypeScript + Tailwind + Lucide (Vite) · FastAPI · FFmpeg/FFprobe
@@ -39,6 +38,3 @@ Run **one** process (jobs live in memory). Put nginx/Caddy in front for TLS and 
 ## API
 `POST /api/upload` · `POST /api/import-url` · `GET /api/video/{id}/metadata` · `POST /api/video/{id}/preview` ·
 `POST /api/video/{id}/trim` · `GET /api/jobs/{id}` · `POST /api/jobs/{id}/cancel` · `GET /api/jobs/{id}/download` · `DELETE /api/video/{id}`
-=======
-# Trim_VID
->>>>>>> 3587804088336e2d8cfb4d602292c64e6286fd5f
