@@ -12,7 +12,6 @@ import { TranscriptStudioView } from "./components/TranscriptStudioView";
 import { AIScriptStudioView } from "./components/AIScriptStudioView";
 import { MultiClipList } from "./components/MultiClipList";
 import { MusicStudioView } from "./components/MusicStudioView";
-import { SubtitleStudioView } from "./components/SubtitleStudioView";
 import { ExportCenterView } from "./components/ExportCenterView";
 
 const fmt = (t: number) => {
@@ -79,7 +78,7 @@ export default function App() {
   const [showGDriveModal, setShowGDriveModal] = useState(false);
 
   // Active studio tab
-  type StudioTab = "editor" | "transcript" | "scripts" | "music" | "subtitles" | "exports";
+  type StudioTab = "editor" | "transcript" | "scripts" | "music" | "exports";
   const [activeTab, setActiveTab] = useState<StudioTab>("editor");
 
   // Video and timeline states
@@ -378,15 +377,6 @@ export default function App() {
             Music
           </button>
           <button
-            onClick={() => setActiveTab("subtitles")}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-bold transition-all ${
-              activeTab === "subtitles" ? "bg-trim text-ink shadow-sm" : "text-mute hover:text-paper"
-            }`}
-          >
-            <Type size={14} />
-            Subtitles
-          </button>
-          <button
             onClick={() => setActiveTab("exports")}
             className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-bold transition-all ${
               activeTab === "exports" ? "bg-trim text-ink shadow-sm" : "text-mute hover:text-paper"
@@ -459,6 +449,7 @@ export default function App() {
             <TranscriptStudioView
               projectId={project.id}
               transcript={project.transcript}
+              defaultUrl={url}
               onSeek={seek}
               onTranscriptUpdated={(t) => setProject({ ...project, transcript: t })}
             />
@@ -485,15 +476,6 @@ export default function App() {
               projectId={project.id}
               selectedTrackId={selectedMusicId}
               onSelectTrack={setSelectedMusicId}
-            />
-          </div>
-        )}
-
-        {activeTab === "subtitles" && (
-          <div className="flex-1 min-w-0">
-            <SubtitleStudioView
-              selectedPresetId={selectedSubtitlePreset}
-              onSelectPreset={setSelectedSubtitlePreset}
             />
           </div>
         )}
@@ -632,17 +614,6 @@ export default function App() {
                         }
                       }}
                     />
-
-                    {/* Subtitle Overlay Mockup if enabled */}
-                    {selectedSubtitlePreset && (
-                      <div className="pointer-events-none absolute bottom-8 inset-x-4 text-center z-20">
-                        {selectedSubtitlePreset.includes("yellow") && (
-                          <span className="font-black text-xl tracking-wide uppercase text-yellow-300 drop-shadow-[0_4px_4px_rgba(0,0,0,1)]">
-                            {meta.name.substring(0, 32)}
-                          </span>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   {/* Player Transport Controls */}

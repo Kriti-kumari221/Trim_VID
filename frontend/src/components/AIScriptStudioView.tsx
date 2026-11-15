@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Sparkles, Brain, Clock, Flame, Film, Check, ArrowRight, Play, Loader2, AlertCircle } from "lucide-react";
+import { Sparkles, Brain, Clock, Flame, Film, Check, ArrowRight, Play, Loader2, AlertCircle, Key, Settings } from "lucide-react";
 import { api, AnalysisData, ScriptData } from "../api";
 
 interface Props {
@@ -28,7 +28,15 @@ export function AIScriptStudioView({
   const [selectedTopicId, setSelectedTopicId] = useState<string>("");
   const [durationTarget, setDurationTarget] = useState(60);
   const [contentStyle, setContentStyle] = useState("motivational");
-  const [activeTab, setActiveTab] = useState<"analysis" | "scripts">("analysis");
+  const [activeTab, setActiveTab] = useState<"analysis" | "scripts">("scripts");
+  const [aiProvider, setAiProvider] = useState<string>("gemini");
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("cliptrim_ai_key") || "");
+  const [showKeyInput, setShowKeyInput] = useState<boolean>(false);
+
+  const updateApiKey = (k: string) => {
+    setApiKey(k);
+    localStorage.setItem("cliptrim_ai_key", k);
+  };
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -52,7 +60,9 @@ export function AIScriptStudioView({
         projectId,
         selectedTopicId || undefined,
         durationTarget,
-        contentStyle
+        contentStyle,
+        apiKey.trim() || undefined,
+        aiProvider
       );
       onScriptsUpdated([res, ...scripts]);
       setActiveTab("scripts");
@@ -182,6 +192,28 @@ export function AIScriptStudioView({
             </div>
           )}
 
+          {/* AI Provider selector */}
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-mute font-medium">AI Model:</span>
+            <select
+              value={aiProvider}
+              onChange={(e) => setAiProvider(e.target.value)}
+              className="rounded border border-line bg-panel px-2 py-1 text-xs text-paper focus:outline-none"
+            >
+              <option value="gemini">Google Gemini 2.0 Flash</option>
+              <option value="groq">Groq (Llama 3.3 70B)</option>
+              <option value="openai">OpenAI GPT-4o Mini</option>
+              <option value="smart">Smart Story Extractor (Built-in)</option>
+            </select>
+            <button
+              onClick={() => setShowKeyInput(!showKeyInput)}
+              className={`p-1 rounded border transition-colors ${apiKey ? "border-emerald-500/50 text-emerald-400 bg-emerald-950/40" : "border-line text-mute hover:text-paper"}`}
+              title="Configure AI API Key (Gemini / Groq / OpenAI)"
+            >
+              <Key size={14} />
+            </button>
+          </div>
+
           <button
             onClick={handleGenerateScript}
             disabled={generating}
@@ -191,6 +223,32 @@ export function AIScriptStudioView({
             Generate Short-Video Script
           </button>
         </div>
+
+        {/* API Key Drawer */}
+        {showKeyInput && (
+          <div className="mt-2.5 pt-2.5 border-t border-line/40 flex flex-wrap items-center gap-2 text-xs">
+            <Key size={13} className="text-amber-400 shrink-0" />
+            <span className="text-mute">
+              {aiProvider === "gemini" ? "Google Gemini API Key:" : (aiProvider === "groq" ? "Groq API Key:" : "OpenAI API Key:")}
+            </span>
+            <input
+              type="password"
+              placeholder={`Paste your ${aiProvider.toUpperCase()} API key here...`}
+              value={apiKey}
+              onChange={(e) => updateApiKey(e.target.value)}
+              className="flex-1 min-w-[200px] rounded border border-line bg-panel px-2 py-1 text-xs text-paper focus:border-trim focus:outline-none font-mono"
+            />
+            {apiKey && (
+              <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                <Check size={12} /> Key Saved
+              </span>
+            )}
+            <span className="text-[10px] text-mute">
+              {aiProvider === "gemini" && "(Free key at aistudio.google.com)"}
+              {aiProvider === "groq" && "(Free ultra-fast key at console.groq.com)"}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Main Tab Content */}

@@ -8,7 +8,7 @@ interface Props {
   clips: ProjectClip[];
   musicTracks: MusicTrack[];
   selectedMusicId: string | null;
-  selectedSubtitlePreset: string;
+  selectedSubtitlePreset?: string;
 }
 
 export function ExportCenterView({
@@ -17,14 +17,13 @@ export function ExportCenterView({
   clips,
   musicTracks,
   selectedMusicId,
-  selectedSubtitlePreset,
 }: Props) {
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [resolution, setResolution] = useState("1080p");
   const [exportName, setExportName] = useState(`${projectName}_Short`);
   const [musicTrackId, setMusicTrackId] = useState<string | null>(selectedMusicId);
   const [musicVolume, setMusicVolume] = useState(0.2);
-  const [subtitlePreset, setSubtitlePreset] = useState<string | null>(selectedSubtitlePreset);
+  const [subtitlePreset, setSubtitlePreset] = useState<string | null>(null);
 
   // Audio Enhancements
   const [noiseReduction, setNoiseReduction] = useState(true);
@@ -177,22 +176,6 @@ export function ExportCenterView({
                     {m.name} ({m.mood})
                   </option>
                 ))}
-              </select>
-            </div>
-
-            {/* Subtitles */}
-            <div>
-              <label className="block text-[11px] text-mute mb-1 font-medium">Burn Subtitles</label>
-              <select
-                value={subtitlePreset || ""}
-                onChange={(e) => setSubtitlePreset(e.target.value || null)}
-                className="w-full rounded border border-line bg-panel px-3 py-1.5 text-xs text-paper focus:outline-none"
-              >
-                <option value="viral_yellow">Viral Shorts (Yellow)</option>
-                <option value="viral_green">Viral Shorts (Neon Green)</option>
-                <option value="cinematic_white">Cinematic Minimal</option>
-                <option value="boxed_modern">Boxed Modern Pill</option>
-                <option value="">No Burn-in Subtitles</option>
               </select>
             </div>
           </div>

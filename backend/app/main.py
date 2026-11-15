@@ -125,10 +125,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _yt_opts_for_client(client: str, out_tmpl: str, hook, max_bytes: int) -> dict:
-    """Build yt-dlp options targeting a specific YouTube player client."""
+def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
+    """Build yt-dlp options targeting specific YouTube player clients."""
     return {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
@@ -136,12 +136,12 @@ def _yt_opts_for_client(client: str, out_tmpl: str, hook, max_bytes: int) -> dic
         "no_warnings": True,
         "max_filesize": max_bytes,
         "progress_hooks": [hook],
-        "extractor_args": {"youtube": {"player_client": [client]}},
+        "extractor_args": {"youtube": {"player_client": clients}},
     }
 
 
 def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
-    """Downloads a streaming URL with multiple client fallbacks to bypass bot detection."""
+    """Downloads a streaming URL using android/mobile clients to reliably bypass bot detection."""
     import yt_dlp
     out_tmpl = str(d / "source.%(ext)s")
 
@@ -152,14 +152,19 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # Try multiple YouTube player clients in priority order.
-    # tv_embedded and web_embedded don't require a JS token/sign-in,
-    # making them the most bot-detection-resistant options.
-    clients = ["tv_embedded", "web_embedded", "ios", "android", "web"]
+    # Android client combined with iOS works consistently without JS challenges or bot blocks
+    client_configs = [
+        ["android", "ios"],
+        ["android"],
+        ["ios"],
+        ["tv_embedded"],
+        ["web_embedded"],
+        ["web"],
+    ]
 
     last_exc: Exception | None = None
-    for client in clients:
-        opts = _yt_opts_for_client(client, out_tmpl, _hook, MAX_UPLOAD_BYTES)
+    for clients in client_configs:
+        opts = _yt_opts_for_client(clients, out_tmpl, _hook, MAX_UPLOAD_BYTES)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -167,16 +172,15 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             candidates = list(d.glob("source.*"))
             if candidates:
                 return candidates[0], title
-            raise RuntimeError("Downloaded file not found on disk.")
-        except yt_dlp.utils.DownloadError as e:
+        except Exception as e:
             last_exc = e
-            # Clean up any partial download before retrying with next client
+            # Clean up partial download before retrying with next client
             for f in d.glob("source.*"):
                 try: f.unlink()
                 except OSError: pass
             continue
 
-    raise RuntimeError(f"Could not download from YouTube after trying all player clients. Last error: {last_exc}")
+    raise RuntimeError(f"Could not download video from that URL. Last error: {last_exc}")
 
 
 def _run_import_job(j: dict):
@@ -209,6 +213,16 @@ def _run_import_job(j: dict):
                         j["progress"] = min(0.95, n / total)
             title = Path(p.path).name or "remote-video"
         result = _register(vid, d, src, title)
+        # Fast YouTube caption extraction if applicable
+        if "youtube.com" in hostname or "youtu.be" in hostname:
+            result["youtube_url"] = url
+            from . import transcription_service
+            try:
+                fast_transcript = transcription_service.extract_youtube_transcript_fast(url)
+                if fast_transcript:
+                    result["initial_transcript"] = fast_transcript
+            except Exception:
+                pass
         j.update(status="done", progress=1.0, result=result)
     except Exception as e:
         j.update(status="failed", error=str(e))

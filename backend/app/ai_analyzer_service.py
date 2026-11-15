@@ -1,9 +1,58 @@
 import json
+import os
 import re
 import uuid
 import time
+import urllib.request
 from typing import Optional, List, Dict, Any
 from . import db
+
+def _call_llm_for_script(prompt: str, api_key: str, provider: str = "gemini") -> Optional[str]:
+    """Calls Gemini, Groq, or OpenAI REST API directly without heavy dependencies."""
+    provider = provider.lower()
+    try:
+        if provider == "gemini":
+            # Gemini 2.0 Flash / 1.5 Flash endpoint
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            body = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.4, "maxOutputTokens": 2048}
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=25) as r:
+                res = json.loads(r.read().decode("utf-8"))
+                return res["candidates"][0]["content"]["parts"][0]["text"]
+                
+        elif provider in ("groq", "openai"):
+            endpoint = (
+                "https://api.groq.com/openai/v1/chat/completions"
+                if provider == "groq"
+                else "https://api.openai.com/v1/chat/completions"
+            )
+            model = "llama-3.3-70b-versatile" if provider == "groq" else "gpt-4o-mini"
+            body = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You are a professional video editor specializing in YouTube Shorts, TikTok, and Instagram Reels. Output ONLY valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.4
+            }
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            )
+            with urllib.request.urlopen(req, timeout=25) as r:
+                res = json.loads(r.read().decode("utf-8"))
+                return res["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"Warning: LLM generation error ({e}). Falling back to Smart Story Extractor.")
+        return None
 
 def analyze_transcript_content(project_id: str, transcript_segments: List[Dict[str, Any]], video_duration: float) -> Dict[str, Any]:
     """Analyzes transcript segments to extract structured topics, highlights, viral hooks, and moments."""
@@ -119,8 +168,15 @@ def analyze_transcript_content(project_id: str, transcript_segments: List[Dict[s
 
     return analysis_res
 
-def generate_short_script(project_id: str, topic_id: Optional[str] = None, duration_target: int = 60, style: str = "educational") -> Dict[str, Any]:
-    """Generates a structured short-video script mapped to original timestamps."""
+def generate_short_script(
+    project_id: str,
+    topic_id: Optional[str] = None,
+    duration_target: int = 60,
+    style: str = "educational",
+    api_key: Optional[str] = None,
+    provider: Optional[str] = "gemini"
+) -> Dict[str, Any]:
+    """Generates a structured short-video script using real AI (Gemini/Groq/OpenAI) or Smart Story Extractor."""
     conn = db.get_connection()
     c = conn.cursor()
     t_row = c.execute("SELECT * FROM transcripts WHERE project_id = ?", (project_id,)).fetchone()
@@ -135,9 +191,10 @@ def generate_short_script(project_id: str, topic_id: Optional[str] = None, durat
     if not segments:
         raise ValueError("Transcript has no speech segments.")
 
-    # Select target transcript slice based on topic or beginning of high-scoring topic
+    # Target slice based on topic or beginning of high-scoring topic
     target_start = 0.0
-    target_end = min(p_row["video_duration"] if p_row else 180.0, target_start + duration_target * 1.5)
+    video_dur = p_row["video_duration"] if p_row else 180.0
+    target_end = min(video_dur, target_start + duration_target * 1.8)
     
     if a_row:
         topics = json.loads(a_row["topics_json"] or "[]")
@@ -147,63 +204,128 @@ def generate_short_script(project_id: str, topic_id: Optional[str] = None, durat
                 target_start = match["start"]
                 target_end = match["end"]
         elif topics:
-            # Pick highest relevance topic
             best_top = max(topics, key=lambda x: x.get("relevance_score", 0))
             target_start = best_top["start"]
             target_end = best_top["end"]
 
-    # Filter segments within topic range
     relevant_segs = [s for s in segments if s["start"] >= target_start and s["start"] <= target_end]
     if not relevant_segs:
-        relevant_segs = segments[:min(10, len(segments))]
+        relevant_segs = segments[:min(35, len(segments))]
 
-    # Distribute scenes to fit target duration (e.g. 30s = 3 scenes; 60s = 4 scenes; 90s = 5 scenes)
-    num_scenes = 3 if duration_target <= 30 else (4 if duration_target <= 60 else 5)
-    scene_dur = duration_target / num_scenes
-    
-    scenes = []
-    seg_step = max(1, len(relevant_segs) // num_scenes)
+    # 1. Check for AI API key (from param or environment variables)
+    active_key = (
+        api_key
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GROQ_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+    active_provider = provider or "gemini"
+    if not api_key:
+        if os.getenv("GROQ_API_KEY"):
+            active_provider = "groq"
+            active_key = os.getenv("GROQ_API_KEY")
+        elif os.getenv("OPENAI_API_KEY"):
+            active_provider = "openai"
+            active_key = os.getenv("OPENAI_API_KEY")
 
-    for i in range(num_scenes):
-        s_start_time = round(i * scene_dur, 1)
-        s_end_time = round((i + 1) * scene_dur, 1)
-        
-        # Map to original video timestamp
-        seg_idx = min(len(relevant_segs) - 1, i * seg_step)
-        seg = relevant_segs[seg_idx]
-        orig_start = seg["start"]
-        orig_end = min(orig_start + (s_end_time - s_start_time), seg.get("end", orig_start + 10.0))
-        if orig_end <= orig_start:
-            orig_end = orig_start + 5.0
+    scenes = None
+
+    if active_key:
+        # Build prompt with actual transcript segments
+        sample_transcript = "\n".join(
+            f"[{s['start']:.2f}s - {s['end']:.2f}s] {s.get('speaker', 'Speaker')}: {s['text']}"
+            for s in relevant_segs[:40]
+        )
+        prompt = (
+            f"You are an expert short-form video editor for YouTube Shorts, TikTok, and Instagram Reels.\n"
+            f"Given this video transcript with timestamps, craft a high-retention viral short video script.\n"
+            f"Target Duration: {duration_target} seconds. Content Style: {style}.\n\n"
+            f"TRANSCRIPT WITH TIMESTAMPS:\n{sample_transcript}\n\n"
+            f"Select the single most engaging narrative or insight arc.\n"
+            f"Break it into 3 to 5 scenes. For each scene, specify:\n"
+            f"- scene_num (integer 1..N)\n"
+            f"- role (e.g. 'Opening Hook', 'Curiosity Spike', 'Story Narrative', 'Core Twist', 'Key Takeaway')\n"
+            f"- script_timeline (e.g. '00:00 - 00:08')\n"
+            f"- duration (float)\n"
+            f"- original_start (float matching start timestamp from transcript)\n"
+            f"- original_end (float matching end timestamp from transcript)\n"
+            f"- dialogue (exact quote spoken in footage)\n"
+            f"- visual_description (cinematic camera directions, zoom, speaker framing)\n"
+            f"- on_screen_text (punchy uppercase 3-5 word hook overlay)\n\n"
+            f"Output ONLY a valid JSON array of scene objects. Do not include markdown codeblocks or explanation."
+        )
+        llm_raw = _call_llm_for_script(prompt, active_key, active_provider)
+        if llm_raw:
+            try:
+                clean_json = re.sub(r"^```(?:json)?|```$", "", llm_raw.strip(), flags=re.MULTILINE).strip()
+                parsed = json.loads(clean_json)
+                if isinstance(parsed, list) and len(parsed) >= 2:
+                    scenes = []
+                    for s in parsed:
+                        scenes.append({
+                            "scene_num": int(s.get("scene_num", len(scenes) + 1)),
+                            "role": str(s.get("role", f"Scene {len(scenes) + 1}")),
+                            "script_timeline": str(s.get("script_timeline", "")),
+                            "duration": round(float(s.get("duration", 10.0)), 1),
+                            "original_start": round(float(s.get("original_start", 0.0)), 2),
+                            "original_end": round(float(s.get("original_end", 10.0)), 2),
+                            "dialogue": str(s.get("dialogue", "")),
+                            "visual_description": str(s.get("visual_description", "")),
+                            "on_screen_text": str(s.get("on_screen_text", "")).upper(),
+                            "approved": True
+                        })
+            except Exception as e:
+                print(f"Failed to parse LLM JSON response: {e}")
+                scenes = None
+
+    # 2. Smart Story Extractor Fallback (extracts REAL quotes & narrative from transcript)
+    if not scenes:
+        num_scenes = 3 if duration_target <= 30 else (4 if duration_target <= 60 else 5)
+        scene_dur = duration_target / num_scenes
+        scenes = []
+        seg_step = max(1, len(relevant_segs) // num_scenes)
+
+        for i in range(num_scenes):
+            s_start_time = round(i * scene_dur, 1)
+            s_end_time = round((i + 1) * scene_dur, 1)
             
-        dialogue = seg.get("text", "Engaging discussion from the source footage.")
-        
-        if i == 0:
-            role = "Opening Hook"
-            visual = "Close-up on speaker delivering the primary thesis; dynamic zoom-in."
-            on_screen = dialogue.split()[:4]
-            on_screen_text = " ".join(on_screen).upper() or "WATCH THIS"
-        elif i == num_scenes - 1:
-            role = "Conclusion & Takeaway"
-            visual = "Speaker summary shot; slow zoom-out; visual graphic overlay."
-            on_screen_text = "KEY TAKEAWAY"
-        else:
-            role = f"Core Explanation {i}"
-            visual = f"Authentic source footage highlighting the core explanation."
-            on_screen_text = "IMPORTANT INSIGHT"
+            seg_idx = min(len(relevant_segs) - 1, i * seg_step)
+            seg = relevant_segs[seg_idx]
+            orig_start = seg["start"]
+            orig_end = min(orig_start + (s_end_time - s_start_time), seg.get("end", orig_start + 10.0))
+            if orig_end <= orig_start:
+                orig_end = orig_start + 6.0
+                
+            raw_text = seg.get("text", "").strip()
+            # Generate punchy on-screen hook from the real dialogue
+            words = [w.strip('.,;:"!?') for w in raw_text.split() if len(w) > 2]
+            
+            if i == 0:
+                role = "Opening Hook"
+                visual = "Speaker tight close-up; dynamic punch-in zoom; bold entrance."
+                on_screen_text = " ".join(words[:4]).upper() or "WATCH THIS"
+            elif i == num_scenes - 1:
+                role = "Twist & Takeaway"
+                visual = "Wide framing; lingering pause on final statement; text highlight."
+                on_screen_text = " ".join(words[-4:]).upper() if len(words) >= 4 else "REMEMBER THIS"
+            else:
+                role = f"Narrative Arc {i}"
+                visual = f"Authentic source footage; pacing matched to natural speech cadence."
+                on_screen_text = " ".join(words[:3]).upper() if words else "KEY MOMENT"
 
-        scenes.append({
-            "scene_num": i + 1,
-            "role": role,
-            "script_timeline": f"{s_start_time:.1f}s - {s_end_time:.1f}s",
-            "duration": round(s_end_time - s_start_time, 1),
-            "original_start": round(orig_start, 2),
-            "original_end": round(orig_end, 2),
-            "dialogue": dialogue,
-            "visual_description": visual,
-            "on_screen_text": on_screen_text,
-            "approved": True
-        })
+            scenes.append({
+                "scene_num": i + 1,
+                "role": role,
+                "script_timeline": f"{s_start_time:.1f}s - {s_end_time:.1f}s",
+                "duration": round(s_end_time - s_start_time, 1),
+                "original_start": round(orig_start, 2),
+                "original_end": round(orig_end, 2),
+                "dialogue": raw_text,
+                "visual_description": visual,
+                "on_screen_text": on_screen_text,
+                "approved": True
+            })
 
     title = f"{style.capitalize()} Short - {duration_target}s"
     script_id = uuid.uuid4().hex

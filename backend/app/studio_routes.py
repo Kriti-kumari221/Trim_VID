@@ -68,6 +68,9 @@ class TranscribeReq(BaseModel):
     language: Optional[str] = "auto"
     model_size: str = "base"
 
+class YouTubeTranscribeReq(BaseModel):
+    url: str
+
 class UpdateTranscriptReq(BaseModel):
     segments: List[Dict[str, Any]]
 
@@ -75,6 +78,8 @@ class GenerateScriptReq(BaseModel):
     topic_id: Optional[str] = None
     duration_target: int = 60
     style: str = "educational"
+    api_key: Optional[str] = None
+    provider: Optional[str] = "gemini"
 
 class MapScriptClipsReq(BaseModel):
     folder_name: str = "Script Clips"
@@ -281,6 +286,15 @@ def get_studio_task_result(task_id: str):
         raise HTTPException(409, "Task not finished yet")
     return t["result"]
 
+@router.post("/projects/{project_id}/transcribe-youtube")
+def transcribe_youtube_route(project_id: str, req: YouTubeTranscribeReq):
+    """Instantly extracts YouTube subtitles/captions with millisecond timestamps (like Tactiq)."""
+    res = transcription_service.extract_youtube_transcript_fast(req.url, project_id=project_id)
+    if not res:
+        raise HTTPException(400, "Could not extract timed captions from this YouTube URL. Use Speech-to-Text Whisper instead.")
+    return res
+
+
 @router.post("/projects/{project_id}/transcribe")
 def transcribe_project_route(project_id: str, req: TranscribeReq):
     p = projects_service.get_project(project_id)
@@ -346,7 +360,9 @@ def generate_script_route(project_id: str, req: GenerateScriptReq):
             project_id=project_id,
             topic_id=req.topic_id,
             duration_target=req.duration_target,
-            style=req.style
+            style=req.style,
+            api_key=req.api_key,
+            provider=req.provider
         )
     except Exception as e:
         raise HTTPException(400, str(e))

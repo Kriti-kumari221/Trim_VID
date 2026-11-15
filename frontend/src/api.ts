@@ -183,6 +183,8 @@ export const api = {
 
   // Transcription
   transcription: {
+    transcribeYouTube: (projectId: string, url: string) =>
+      post(`/api/projects/${projectId}/transcribe-youtube`, { url }).then(j<TranscriptData>),
     transcribe: (projectId: string, language = "auto", model_size = "base") =>
       post(`/api/projects/${projectId}/transcribe`, { language, model_size }).then(j<{ task_id: string; status: string }>),
     pollTask: (taskId: string) => fetch(apiUrl(`/api/studio-tasks/${taskId}`)).then(j<{ id: string; type: string; status: string; progress: number; error: string | null }>),
@@ -194,8 +196,14 @@ export const api = {
   // Content Analysis & AI Scripts
   analysis: {
     analyze: (projectId: string) => post(`/api/projects/${projectId}/analyze`).then(j<AnalysisData>),
-    generateScript: (projectId: string, topic_id?: string, duration_target = 60, style = "educational") =>
-      post(`/api/projects/${projectId}/scripts/generate`, { topic_id, duration_target, style }).then(j<ScriptData>),
+    generateScript: (
+      projectId: string,
+      topic_id?: string,
+      duration_target = 60,
+      style = "educational",
+      api_key?: string,
+      provider = "gemini"
+    ) => post(`/api/projects/${projectId}/scripts/generate`, { topic_id, duration_target, style, api_key, provider }).then(j<ScriptData>),
     mapToClips: (projectId: string, scriptId: string, folder_name = "Script Clips") =>
       post(`/api/projects/${projectId}/scripts/${scriptId}/map-to-clips`, { folder_name }).then(j<{ created_clips: ProjectClip[] }>),
   },
