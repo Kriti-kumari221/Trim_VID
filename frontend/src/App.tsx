@@ -5,7 +5,7 @@ import {
   Film, Folder, Mic, Sparkles, Music, Type, HardDrive, Plus, Check, RefreshCw
 } from "lucide-react";
 
-import { api, Meta, Job, Loaded, Project, ProjectClip, MusicTrack } from "./api";
+import { api, apiUrl, Meta, Job, Loaded, Project, ProjectClip, MusicTrack } from "./api";
 import { ProjectsModal } from "./components/ProjectsModal";
 import { GDriveModal } from "./components/GDriveModal";
 import { TranscriptStudioView } from "./components/TranscriptStudioView";
@@ -140,7 +140,7 @@ export default function App() {
       setProject(full);
       if (full.video_id) {
         setVid(full.video_id);
-        const m = await fetch(`/api/video/${full.video_id}/metadata`).then((r) => r.json());
+        const m = await fetch(apiUrl(`/api/video/${full.video_id}/metadata`)).then((r) => r.json());
         setMeta(m);
         setStartS(0);
         setEndS(m.duration);
@@ -199,7 +199,7 @@ export default function App() {
         video_id: r.video_id,
         video_name: r.metadata.name,
         video_duration: r.metadata.duration,
-        thumbnail_url: `/api/video/${r.video_id}/thumbs/0`,
+        thumbnail_url: apiUrl(`/api/video/${r.video_id}/thumbs/0`),
       });
       if (updated) setProject(updated);
     }
@@ -580,7 +580,7 @@ export default function App() {
                   <div className="relative rounded-lg bg-black overflow-hidden aspect-video w-full shadow-2xl border border-line">
                     <video
                       ref={v}
-                      src={`/api/video/${vid}/source`}
+                      src={apiUrl(`/api/video/${vid}/source`)}
                       className="h-full w-full object-contain cursor-pointer"
                       onClick={togglePlay}
                       onPlay={() => setPlaying(true)}
@@ -679,7 +679,7 @@ export default function App() {
                           {Array.from({ length: meta.thumbs }, (_, i) => (
                             <img
                               key={i}
-                              src={`/api/video/${vid}/thumbs/${i}`}
+                              src={apiUrl(`/api/video/${vid}/thumbs/${i}`)}
                               draggable={false}
                               alt=""
                               className="h-full min-w-0 flex-1 object-cover"
@@ -823,7 +823,7 @@ export default function App() {
                     <div className="h-1.5 rounded bg-trim transition-all" style={{ width: `${job.progress * 100}%` }} />
                   </div>
                   {job.status === "done" && (
-                    <a className={`${solid} mt-3 w-full justify-center text-xs`} href={`/api/jobs/${job.id}/download`}>
+                    <a className={`${solid} mt-3 w-full justify-center text-xs`} href={apiUrl(`/api/jobs/${job.id}/download`)}>
                       <Download size={14} />
                       Download Clip
                     </a>

@@ -97,6 +97,13 @@ export type VideoAssessment = {
   thumbnail_url: string | null; path: string
 };
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+export const apiUrl = (path: string) => {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+};
+
 async function j<T>(r: Response): Promise<T> {
   const b = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -107,20 +114,20 @@ async function j<T>(r: Response): Promise<T> {
 }
 
 const post = (u: string, body?: unknown) =>
-  fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  fetch(apiUrl(u), { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 
 const put = (u: string, body?: unknown) =>
-  fetch(u, { method: "PUT", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  fetch(apiUrl(u), { method: "PUT", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 
-const del = (u: string) => fetch(u, { method: "DELETE" });
+const del = (u: string) => fetch(apiUrl(u), { method: "DELETE" });
 
 export const api = {
   // Existing baseline methods
-  config: () => fetch("/api/config").then(j<{ max_upload_mb: number; hw_encoders: string[]; formats: string[] }>),
+  config: () => fetch(apiUrl("/api/config")).then(j<{ max_upload_mb: number; hw_encoders: string[]; formats: string[] }>),
   upload: (file: File, onProgress: (p: number) => void) =>
     new Promise<Loaded>((res, rej) => {
       const x = new XMLHttpRequest();
-      x.open("POST", "/api/upload");
+      x.open("POST", apiUrl("/api/upload"));
       x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
       x.onload = () => {
         try {
@@ -134,15 +141,17 @@ export const api = {
   importUrl: (url: string) => post("/api/import-url", { url }).then(j<Loaded>),
   remove: (id: string) => del(`/api/video/${id}`),
   trim: (id: string, o: Opts) => post(`/api/video/${id}/trim`, o).then(j<Job>),
-  preview: (id: string, o: Opts) => post(`/api/video/${id}/preview`, o).then(j<{ preview_url: string }>),
-  job: (id: string) => fetch(`/api/jobs/${id}`).then(j<Job>),
+  preview: (id: string, o: Opts) => post(`/api/video/${id}/preview`, o)
+    .then(j<{ preview_url: string }>)
+    .then((result) => ({ ...result, preview_url: apiUrl(result.preview_url) })),
+  job: (id: string) => fetch(apiUrl(`/api/jobs/${id}`)).then(j<Job>),
   cancel: (id: string) => post(`/api/jobs/${id}/cancel`).then(j<Job>),
 
   // Projects
   projects: {
-    list: (search = "", folder = "") => fetch(`/api/projects?search=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}`).then(j<Project[]>),
+    list: (search = "", folder = "") => fetch(apiUrl(`/api/projects?search=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}`)).then(j<Project[]>),
     create: (name: string, folder = "General", video_id?: string) => post("/api/projects", { name, folder, video_id }).then(j<Project>),
-    get: (id: string) => fetch(`/api/projects/${id}`).then(j<Project>),
+    get: (id: string) => fetch(apiUrl(`/api/projects/${id}`)).then(j<Project>),
     update: (id: string, updates: Partial<Project>) => put(`/api/projects/${id}`, updates).then(j<Project>),
     delete: (id: string) => del(`/api/projects/${id}`).then(j<{ deleted: boolean }>),
     duplicate: (id: string) => post(`/api/projects/${id}/duplicate`).then(j<Project>),
@@ -174,7 +183,7 @@ export const api = {
   transcription: {
     transcribe: (projectId: string, language = "auto", model_size = "base") => post(`/api/projects/${projectId}/transcribe`, { language, model_size }).then(j<TranscriptData>),
     update: (projectId: string, segments: TranscriptSegment[]) => put(`/api/projects/${projectId}/transcript`, { segments }).then(j<TranscriptData>),
-    exportUrl: (projectId: string, format = "srt") => `/api/projects/${projectId}/transcript/export?format=${format}`,
+    exportUrl: (projectId: string, format = "srt") => apiUrl(`/api/projects/${projectId}/transcript/export?format=${format}`),
   },
 
   // Content Analysis & AI Scripts
@@ -188,14 +197,14 @@ export const api = {
 
   // Music
   music: {
-    list: (projectId?: string) => fetch(`/api/music${projectId ? `?project_id=${projectId}` : ""}`).then(j<MusicTrack[]>),
+    list: (projectId?: string) => fetch(apiUrl(`/api/music${projectId ? `?project_id=${projectId}` : ""}`)).then(j<MusicTrack[]>),
     generate: (mood: string, genre = "cinematic", duration = 60, projectId?: string) =>
       post(`/api/music/generate${projectId ? `?project_id=${projectId}` : ""}`, { mood, genre, duration }).then(j<MusicTrack>),
   },
 
   // Subtitles
   subtitles: {
-    presets: () => fetch("/api/subtitles/presets").then(j<SubtitlePreset[]>),
+    presets: () => fetch(apiUrl("/api/subtitles/presets")).then(j<SubtitlePreset[]>),
   },
 
   // Video Assembly & Export Center
@@ -210,8 +219,10 @@ export const api = {
       resolution?: string;
       enhancements?: Record<string, any>;
       export_name?: string;
-    }) => post(`/api/projects/${projectId}/assemble`, options).then(j<{ export_id: string; filename: string; file_size: number; download_url: string }>),
-    exports: (projectId: string) => fetch(`/api/projects/${projectId}/exports`).then(j<ExportItem[]>),
-    exportZipUrl: (projectId: string) => `/api/projects/${projectId}/export-zip`,
+    }) => post(`/api/projects/${projectId}/assemble`, options)
+      .then(j<{ export_id: string; filename: string; file_size: number; download_url: string }>)
+      .then((result) => ({ ...result, download_url: apiUrl(result.download_url) })),
+    exports: (projectId: string) => fetch(apiUrl(`/api/projects/${projectId}/exports`)).then(j<ExportItem[]>),
+    exportZipUrl: (projectId: string) => apiUrl(`/api/projects/${projectId}/export-zip`),
   }
 };

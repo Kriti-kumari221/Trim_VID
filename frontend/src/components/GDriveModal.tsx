@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { HardDrive, FileArchive, CheckSquare, Square, Download, Video, Music, FileText, Check, AlertCircle, Loader2, X } from "lucide-react";
-import { api, GDriveFileItem, VideoAssessment } from "../api";
+import { api, apiUrl, GDriveFileItem, VideoAssessment } from "../api";
 
 interface Props {
   onImportVideo: (file_path: string, name: string) => void;
@@ -201,7 +201,7 @@ export function GDriveModal({ onImportVideo, onClose }: Props) {
                   <div key={v.assessment_id} className="rounded-lg border border-line bg-ink/70 p-4 space-y-3">
                     <div className="flex gap-3">
                       {v.thumbnail_url ? (
-                        <img src={v.thumbnail_url} alt="" className="h-20 w-32 rounded object-cover border border-line shrink-0" />
+                        <img src={apiUrl(v.thumbnail_url)} alt="" className="h-20 w-32 rounded object-cover border border-line shrink-0" />
                       ) : (
                         <div className="flex h-20 w-32 items-center justify-center rounded bg-black border border-line shrink-0">
                           <Video size={24} className="text-mute" />

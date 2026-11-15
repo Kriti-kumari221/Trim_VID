@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Download, Film, Sparkles, Music, Type, Check, AlertCircle, Loader2, FileArchive, Sliders, Play } from "lucide-react";
-import { api, ProjectClip, MusicTrack, ExportItem } from "../api";
+import { api, apiUrl, ProjectClip, MusicTrack, ExportItem } from "../api";
 
 interface Props {
   projectId: string;
@@ -292,7 +292,7 @@ export function ExportCenterView({
                   </div>
 
                   <a
-                    href={`/api/exports/${item.id}/download`}
+                    href={apiUrl(`/api/exports/${item.id}/download`)}
                     download
                     className="inline-flex items-center gap-1.5 rounded bg-line/60 px-3 py-1 font-semibold text-paper hover:bg-trim hover:text-ink transition-colors"
                   >
