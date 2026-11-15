@@ -17,6 +17,8 @@ WORKERS = int(os.getenv("JOB_WORKERS", "2"))
 
 cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 CORS_ORIGINS = [orig.strip() for orig in cors_raw.split(",") if orig.strip()]
+if "https://trim-vid-34.onrender.com" not in CORS_ORIGINS:
+    CORS_ORIGINS.append("https://trim-vid-34.onrender.com")
 
 # Try standard relative paths to find built frontend
 _default_dist = BASE_DIR.parent / "frontend" / "dist"

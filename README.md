@@ -79,7 +79,7 @@ Runs backend on `:8000` and Vite dev server on **`http://localhost:5173`**.
 ### Deploying the frontend separately
 The production frontend uses `VITE_API_BASE_URL` to call the backend; `frontend/.env.production` is set to `https://trim-vid.onrender.com`. If deploying to a frontend host that supports build environment variables, set `VITE_API_BASE_URL` there as well (the value is the backend origin, without a trailing slash), then rebuild/redeploy.
 
-On the Render backend service, set `CORS_ORIGINS` to the exact public frontend origin, for example `https://your-app.onrender.com` (no path or trailing slash), and redeploy the backend. For multiple origins, separate them with commas. The default only allows localhost, so a deployed frontend will otherwise be blocked by the browser.
+The deployed Render frontend origin `https://trim-vid-34.onrender.com` is allowed by default. If you use a different frontend domain, set `CORS_ORIGINS` on the backend to include that exact origin (no path or trailing slash); separate multiple origins with commas.
 
 ---
 
