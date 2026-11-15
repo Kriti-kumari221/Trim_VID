@@ -138,7 +138,9 @@ export const api = {
       x.onerror = () => rej(new Error("Network error"));
       const fd = new FormData(); fd.append("file", file); x.send(fd);
     }),
-  importUrl: (url: string) => post("/api/import-url", { url }).then(j<Loaded>),
+  importUrl: (url: string) => post("/api/import-url", { url }).then(j<Job>),
+  importJobResult: (jobId: string) => fetch(apiUrl(`/api/jobs/${jobId}/result`)).then(j<Loaded>),
+  importLocalPath: (filePath: string, name = "") => post("/api/import-local-path", { file_path: filePath, name }).then(j<Loaded>),
   remove: (id: string) => del(`/api/video/${id}`),
   trim: (id: string, o: Opts) => post(`/api/video/${id}/trim`, o).then(j<Job>),
   preview: (id: string, o: Opts) => post(`/api/video/${id}/preview`, o)
@@ -181,7 +183,10 @@ export const api = {
 
   // Transcription
   transcription: {
-    transcribe: (projectId: string, language = "auto", model_size = "base") => post(`/api/projects/${projectId}/transcribe`, { language, model_size }).then(j<TranscriptData>),
+    transcribe: (projectId: string, language = "auto", model_size = "base") =>
+      post(`/api/projects/${projectId}/transcribe`, { language, model_size }).then(j<{ task_id: string; status: string }>),
+    pollTask: (taskId: string) => fetch(apiUrl(`/api/studio-tasks/${taskId}`)).then(j<{ id: string; type: string; status: string; progress: number; error: string | null }>),
+    taskResult: (taskId: string) => fetch(apiUrl(`/api/studio-tasks/${taskId}/result`)).then(j<TranscriptData>),
     update: (projectId: string, segments: TranscriptSegment[]) => put(`/api/projects/${projectId}/transcript`, { segments }).then(j<TranscriptData>),
     exportUrl: (projectId: string, format = "srt") => apiUrl(`/api/projects/${projectId}/transcript/export?format=${format}`),
   },

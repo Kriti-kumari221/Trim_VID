@@ -39,6 +39,11 @@ class UrlReq(BaseModel):
     url: str
 
 
+class LocalFileReq(BaseModel):
+    file_path: str
+    name: str = ""
+
+
 # ---------- helpers ----------
 def _safe_unlink(p: Path):
     try:
@@ -120,32 +125,99 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _download_ytdlp(url: str, d: Path) -> tuple[Path, str]:
-    import yt_dlp
-    out_tmpl = str(d / "source.%(ext)s")
-    ydl_opts = {
+def _yt_opts_for_client(client: str, out_tmpl: str, hook, max_bytes: int) -> dict:
+    """Build yt-dlp options targeting a specific YouTube player client."""
+    return {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "max_filesize": MAX_UPLOAD_BYTES,
-        "js_runtimes": {"node": {}},
+        "max_filesize": max_bytes,
+        "progress_hooks": [hook],
+        "extractor_args": {"youtube": {"player_client": [client]}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        title = info.get("title") or "remote-video"
 
-    candidates = list(d.glob("source.*"))
-    if not candidates:
-        raise RuntimeError("Failed to locate downloaded video file.")
-    return candidates[0], title
+
+def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
+    """Downloads a streaming URL with multiple client fallbacks to bypass bot detection."""
+    import yt_dlp
+    out_tmpl = str(d / "source.%(ext)s")
+
+    def _hook(h):
+        if progress_cb and h.get("status") == "downloading":
+            total = h.get("total_bytes") or h.get("total_bytes_estimate") or 0
+            downloaded = h.get("downloaded_bytes") or 0
+            if total > 0:
+                progress_cb(min(0.95, downloaded / total))
+
+    # Try multiple YouTube player clients in priority order.
+    # tv_embedded and web_embedded don't require a JS token/sign-in,
+    # making them the most bot-detection-resistant options.
+    clients = ["tv_embedded", "web_embedded", "ios", "android", "web"]
+
+    last_exc: Exception | None = None
+    for client in clients:
+        opts = _yt_opts_for_client(client, out_tmpl, _hook, MAX_UPLOAD_BYTES)
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                title = info.get("title") or "remote-video"
+            candidates = list(d.glob("source.*"))
+            if candidates:
+                return candidates[0], title
+            raise RuntimeError("Downloaded file not found on disk.")
+        except yt_dlp.utils.DownloadError as e:
+            last_exc = e
+            # Clean up any partial download before retrying with next client
+            for f in d.glob("source.*"):
+                try: f.unlink()
+                except OSError: pass
+            continue
+
+    raise RuntimeError(f"Could not download from YouTube after trying all player clients. Last error: {last_exc}")
+
+
+def _run_import_job(j: dict):
+    """Background worker: downloads a URL (YouTube, direct video, etc.) and registers the video."""
+    if j["cancel"]:
+        j["status"] = "cancelled"
+        return
+    j["status"] = "running"
+    url: str = j["url"]
+    p = urlparse(url)
+    hostname = (p.hostname or "").lower()
+    is_streaming = any(h in hostname for h in ("youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "twitter.com", "x.com", "instagram.com"))
+    ext = Path(p.path).suffix.lower()
+    vid: str = j["video_id"]
+    d: Path = j["dir"]
+    try:
+        if is_streaming or ext not in ALLOWED_EXT:
+            src, title = _download_ytdlp(url, d, progress_cb=lambda p: j.__setitem__("progress", p))
+        else:
+            src = d / f"source{ext}"
+            n = 0
+            with urllib.request.build_opener(_NoRedirect).open(url, timeout=60) as r, open(src, "wb") as out:
+                total = int(r.headers.get("Content-Length") or 0)
+                while chunk := r.read(1 << 20):
+                    n += len(chunk)
+                    if n > MAX_UPLOAD_BYTES:
+                        raise RuntimeError("Remote file exceeds the size limit.")
+                    out.write(chunk)
+                    if total:
+                        j["progress"] = min(0.95, n / total)
+            title = Path(p.path).name or "remote-video"
+        result = _register(vid, d, src, title)
+        j.update(status="done", progress=1.0, result=result)
+    except Exception as e:
+        j.update(status="failed", error=str(e))
+        shutil.rmtree(d, ignore_errors=True)
 
 
 @app.post("/api/import-url")
 def import_url(req: UrlReq):
-    """Imports a YouTube link or direct video file URL."""
+    """Starts an async import job for a YouTube link or direct video URL and returns a job id."""
     p = urlparse(req.url)
     if p.scheme not in ("http", "https") or not p.hostname:
         raise HTTPException(400, "Enter a valid http(s) URL (e.g. YouTube or video link).")
@@ -155,48 +227,60 @@ def import_url(req: UrlReq):
     except socket.gaierror:
         raise HTTPException(400, "Could not resolve that host.")
 
-    hostname = (p.hostname or "").lower()
-    is_streaming = any(d in hostname for d in ("youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "twitter.com", "x.com", "instagram.com"))
-    ext = Path(p.path).suffix.lower()
-
     vid = uuid.uuid4().hex
     d = config.DATA_DIR / vid
     d.mkdir()
 
-    if is_streaming or ext not in ALLOWED_EXT:
-        try:
-            src, title = _download_ytdlp(req.url, d)
-            return _register(vid, d, src, title)
-        except Exception as e:
-            shutil.rmtree(d, ignore_errors=True)
-            raise HTTPException(400, f"Could not download video from that URL: {e}")
-    else:
-        src = d / f"source{ext}"
-        try:
-            n = 0
-            with urllib.request.build_opener(_NoRedirect).open(req.url, timeout=30) as r, open(src, "wb") as out:
-                while chunk := r.read(1 << 20):
-                    n += len(chunk)
-                    if n > MAX_UPLOAD_BYTES:
-                        raise HTTPException(413, "Remote file exceeds the size limit.")
-                    out.write(chunk)
-            return _register(vid, d, src, Path(p.path).name or "remote-video")
-        except HTTPException:
-            shutil.rmtree(d, ignore_errors=True)
-            raise
-        except Exception:
-            try:
-                src, title = _download_ytdlp(req.url, d)
-                return _register(vid, d, src, title)
-            except Exception as e:
-                shutil.rmtree(d, ignore_errors=True)
-                raise HTTPException(400, f"Could not download the link ({e}).")
+    jid = uuid.uuid4().hex
+    j = dict(id=jid, video_id=vid, dir=d, url=req.url, type="import",
+             status="queued", progress=0.0, error=None, cancel=False, proc=None, result=None)
+    JOBS[jid] = j
+    pool.submit(_run_import_job, j)
+    return _public(j)
+
+
+@app.get("/api/jobs/{job_id}/result")
+def job_result(job_id: str):
+    """Returns the imported video metadata once an import job is done."""
+    j = _job(job_id)
+    if j.get("type") != "import":
+        raise HTTPException(400, "Not an import job")
+    if j["status"] != "done":
+        raise HTTPException(409, "Import not finished yet")
+    return j["result"]
+
+
+@app.post("/api/import-local-path")
+def import_local_path(req: LocalFileReq):
+    """Imports an already downloaded/extracted local video file (e.g. from Google Drive / ZIP)."""
+    p = Path(req.file_path)
+    if not p.is_file():
+        raise HTTPException(404, "File not found on server")
+    ext = p.suffix.lower()
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(415, f"Unsupported format '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXT))}")
+    vid = uuid.uuid4().hex
+    d = config.DATA_DIR / vid
+    d.mkdir()
+    src = d / f"source{ext}"
+    try:
+        shutil.copy2(p, src)
+        return _register(vid, d, src, req.name or p.name)
+    except Exception as e:
+        shutil.rmtree(d, ignore_errors=True)
+        raise HTTPException(400, f"Could not import file: {e}")
 
 
 # ---------- video ----------
 @app.get("/api/video/{video_id}/metadata")
 def metadata(video_id: str):
-    return _load(video_id)[1]
+    d, meta = _load(video_id)
+    # Touch directory mtime so the janitor knows this video is still in use
+    try:
+        import os as _os; _os.utime(d, None)
+    except OSError:
+        pass
+    return meta
 
 
 @app.get("/api/video/{video_id}/source")
@@ -241,7 +325,7 @@ def delete_video(video_id: str):
     for j in JOBS.values():
         if j["video_id"] == video_id:
             j["cancel"] = True
-            if j["proc"]:
+            if j.get("proc"):
                 j["proc"].kill()
     shutil.rmtree(d, ignore_errors=True)
     return {"deleted": True}
@@ -249,7 +333,9 @@ def delete_video(video_id: str):
 
 # ---------- jobs ----------
 def _public(j):
-    return {k: j[k] for k in ("id", "video_id", "status", "progress", "error")}
+    out = {k: j[k] for k in ("id", "video_id", "status", "progress", "error")}
+    out["type"] = j.get("type", "trim")
+    return out
 
 
 def _run_job(j):
@@ -322,16 +408,37 @@ def job_download(job_id: str):
 
 
 # ---------- cleanup ----------
+def _get_protected_video_ids() -> set:
+    """Return the set of video_ids that are referenced by at least one project — never delete these."""
+    try:
+        import sqlite3
+        db_path = config.DATA_DIR / "studio.db"
+        if not db_path.is_file():
+            return set()
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        rows = conn.execute("SELECT DISTINCT video_id FROM projects WHERE video_id IS NOT NULL AND video_id != ''").fetchall()
+        conn.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
 def _janitor():
     while True:
         time.sleep(600)
         try:
+            protected = _get_protected_video_ids()
             for d in config.DATA_DIR.iterdir():
-                # Only purge transient directories, never studio databases, music, or exports
-                is_transient = ID_RE.match(d.name) or d.name.startswith("assess_") or d.name.startswith("tmp_") or d.name.startswith("gdrive_")
-                if d.is_dir() and is_transient and (time.time() - d.stat().st_mtime > config.TTL_HOURS * 3600):
+                # Protect: explicitly referenced by a project OR recently touched (< TTL_HOURS)
+                is_transient = (ID_RE.match(d.name) or d.name.startswith("assess_")
+                                or d.name.startswith("tmp_") or d.name.startswith("gdrive_"))
+                is_protected = d.name in protected
+                is_old = (time.time() - d.stat().st_mtime) > config.TTL_HOURS * 3600
+                if d.is_dir() and is_transient and not is_protected and is_old:
                     shutil.rmtree(d, ignore_errors=True)
-            for k in [k for k, j in JOBS.items() if not j["out"].parent.exists()]:
+            # Clean up completed jobs whose output dir is gone
+            for k in [k for k, j in JOBS.items()
+                      if j.get("out") and not Path(j["out"]).parent.exists()]:
                 JOBS.pop(k, None)
         except Exception:
             pass
@@ -341,3 +448,8 @@ threading.Thread(target=_janitor, daemon=True).start()
 
 if config.FRONTEND_DIST.is_dir():      # production: serve the built SPA from the same process
     app.mount("/", StaticFiles(directory=config.FRONTEND_DIST, html=True), name="spa")
+
+if __name__ == "__main__":
+    import os, uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port)

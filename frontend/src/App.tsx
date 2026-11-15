@@ -218,6 +218,40 @@ export default function App() {
     }
   };
 
+  const importFromUrl = async () => {
+    if (!url || busy) return;
+    setErr("");
+    setBusy("Importing YouTube video");
+    setPct(0);
+    try {
+      // Start async import job on the backend
+      const importJob = await api.importUrl(url);
+      let j = importJob;
+      // Poll until done
+      while (j.status === "queued" || j.status === "running") {
+        await new Promise((r) => setTimeout(r, 1200));
+        j = await api.job(j.id);
+        setPct(j.progress);
+        if (j.status === "running" && j.progress < 0.1) {
+          setBusy("Connecting to YouTube…");
+        } else if (j.status === "running") {
+          setBusy(`Downloading video… ${Math.round(j.progress * 100)}%`);
+        }
+      }
+      if (j.status === "failed") throw new Error(j.error || "Import failed");
+      if (j.status === "cancelled") throw new Error("Import was cancelled");
+      // Fetch the actual video metadata result
+      const result = await api.importJobResult(j.id);
+      loaded(result);
+      setUrl("");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy("");
+      setPct(0);
+    }
+  };
+
   const opts = () => ({ start, end, ...opt });
 
   const startDrag = (which: "s" | "e" | "h") => (ev: React.PointerEvent) => {
@@ -545,6 +579,7 @@ export default function App() {
                       <input
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && importFromUrl()}
                         placeholder="Paste YouTube link or direct video file URL"
                         className="w-full rounded-md border border-line bg-panel py-2 pl-9 pr-3 text-sm text-paper focus:border-trim focus:outline-none"
                       />
@@ -552,7 +587,7 @@ export default function App() {
                     <button
                       className={solid}
                       disabled={!url || !!busy}
-                      onClick={() => run("Importing", () => api.importUrl(url))}
+                      onClick={importFromUrl}
                     >
                       Import
                     </button>
@@ -562,14 +597,17 @@ export default function App() {
                     <div className="mt-4" role="status">
                       <div className="mb-1 flex items-center justify-center gap-2 text-sm text-paper">
                         <Loader2 className="animate-spin text-trim" size={16} />
-                        {busy}…{busy === "Uploading" && ` ${Math.round(pct * 100)}%`}
+                        {busy}
                       </div>
                       <div className="h-2 rounded bg-panel overflow-hidden max-w-sm mx-auto">
                         <div
-                          className="h-2 rounded bg-trim transition-all"
-                          style={{ width: busy === "Uploading" ? `${pct * 100}%` : "50%" }}
+                          className="h-2 rounded bg-trim transition-all duration-500"
+                          style={{ width: pct > 0 ? `${pct * 100}%` : (busy.startsWith("Uploading") ? "30%" : "15%") }}
                         />
                       </div>
+                      {pct > 0 && (
+                        <p className="text-center text-xs text-mute mt-1">{Math.round(pct * 100)}% complete</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -854,8 +892,7 @@ export default function App() {
       {showGDriveModal && (
         <GDriveModal
           onImportVideo={(path, name) => {
-            // Upload local path into project
-            api.importUrl(`file://${path}`).catch(() => {});
+            run("Loading Drive Video", () => api.importLocalPath(path, name));
           }}
           onClose={() => setShowGDriveModal(false)}
         />

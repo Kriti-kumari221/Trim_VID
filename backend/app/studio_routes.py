@@ -3,6 +3,8 @@ import os
 import shutil
 import time
 import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 from fastapi import APIRouter, HTTPException, UploadFile, File, Response
@@ -13,6 +15,11 @@ from . import config, db, projects_service, clips_service, gdrive_service
 from . import transcription_service, ai_analyzer_service, music_service, subtitles_service, enhancement_service, assembly_service
 
 router = APIRouter(prefix="/api", tags=["studio"])
+
+# Background thread pool for long-running studio tasks (transcription, analysis, etc.)
+_studio_pool = ThreadPoolExecutor(max_workers=2)
+# In-memory task store: { task_id: { status, progress, result, error } }
+_STUDIO_TASKS: Dict[str, Dict] = {}
 
 # ----------------- Models -----------------
 class CreateProjectReq(BaseModel):
@@ -25,6 +32,10 @@ class UpdateProjectReq(BaseModel):
     folder: Optional[str] = None
     status: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
+    video_id: Optional[str] = None
+    video_name: Optional[str] = None
+    video_duration: Optional[float] = None
+    thumbnail_url: Optional[str] = None
 
 class CreateFolderReq(BaseModel):
     name: str
@@ -248,6 +259,28 @@ def get_assessment_thumb(assessment_id: str):
     return FileResponse(f, media_type="image/jpeg")
 
 # ----------------- Transcription -----------------
+def _make_task(task_type: str) -> Dict:
+    tid = uuid.uuid4().hex
+    task = {"id": tid, "type": task_type, "status": "running", "progress": 0.0, "result": None, "error": None}
+    _STUDIO_TASKS[tid] = task
+    return task
+
+@router.get("/studio-tasks/{task_id}")
+def get_studio_task(task_id: str):
+    t = _STUDIO_TASKS.get(task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    return {k: t[k] for k in ("id", "type", "status", "progress", "error")}
+
+@router.get("/studio-tasks/{task_id}/result")
+def get_studio_task_result(task_id: str):
+    t = _STUDIO_TASKS.get(task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    if t["status"] != "done":
+        raise HTTPException(409, "Task not finished yet")
+    return t["result"]
+
 @router.post("/projects/{project_id}/transcribe")
 def transcribe_project_route(project_id: str, req: TranscribeReq):
     p = projects_service.get_project(project_id)
@@ -260,17 +293,23 @@ def transcribe_project_route(project_id: str, req: TranscribeReq):
         raise HTTPException(404, "Video metadata not found.")
     meta = json.loads(meta_file.read_text(encoding="utf-8"))
     src_video = src_dir / meta["source"]
-    
-    try:
-        res = transcription_service.transcribe_video(
-            project_id=project_id,
-            video_path=src_video,
-            language=req.language,
-            model_size=req.model_size
-        )
-        return res
-    except Exception as e:
-        raise HTTPException(500, f"Transcription failed: {e}")
+
+    task = _make_task("transcribe")
+
+    def _run():
+        try:
+            res = transcription_service.transcribe_video(
+                project_id=project_id,
+                video_path=src_video,
+                language=req.language,
+                model_size=req.model_size
+            )
+            task.update(status="done", progress=1.0, result=res)
+        except Exception as e:
+            task.update(status="failed", error=str(e))
+
+    _studio_pool.submit(_run)
+    return {"task_id": task["id"], "status": "running"}
 
 @router.put("/projects/{project_id}/transcript")
 def update_transcript_route(project_id: str, req: UpdateTranscriptReq):
@@ -348,7 +387,7 @@ def get_music_audio(track_id: str):
     audio_file = config.DATA_DIR / "music" / row["filename"]
     if not audio_file.is_file():
         raise HTTPException(404, "Audio file missing")
-    return FileResponse(audio_file, media_type="audio/mpeg")
+    return FileResponse(audio_file, media_type="audio/mpeg", filename=row["filename"])
 
 # ----------------- Subtitle Presets -----------------
 @router.get("/subtitles/presets")

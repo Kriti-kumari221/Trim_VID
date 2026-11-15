@@ -11,6 +11,7 @@ interface Props {
 
 export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscriptUpdated }: Props) {
   const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState("Running faster-whisper AI transcription...");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [modelSize, setModelSize] = useState("base");
@@ -21,9 +22,28 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
   const handleTranscribe = async () => {
     setLoading(true);
     setError("");
+    setLoadingMsg("Starting transcription engine...");
     try {
-      const res = await api.transcription.transcribe(projectId, language, modelSize);
-      onTranscriptUpdated(res);
+      const { task_id } = await api.transcription.transcribe(projectId, language, modelSize);
+      setLoadingMsg("Extracting audio from video...");
+      // Poll until done
+      let attempts = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const task = await api.transcription.pollTask(task_id);
+        attempts++;
+        if (task.status === "done") {
+          const result = await api.transcription.taskResult(task_id);
+          onTranscriptUpdated(result);
+          break;
+        } else if (task.status === "failed") {
+          throw new Error(task.error || "Transcription failed");
+        }
+        // Update loading message based on elapsed time
+        if (attempts < 5) setLoadingMsg("Extracting audio from video...");
+        else if (attempts < 15) setLoadingMsg("Detecting speech segments...");
+        else setLoadingMsg("Almost done — finalizing timestamps...");
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -180,8 +200,11 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
         {loading ? (
           <div className="flex h-64 flex-col items-center justify-center text-mute gap-3">
             <Loader2 size={28} className="animate-spin text-trim" />
-            <span className="text-sm font-semibold">Running faster-whisper AI transcription...</span>
-            <span className="text-xs">Detecting speech segments and timestamps</span>
+            <span className="text-sm font-semibold">{loadingMsg}</span>
+            <span className="text-xs">This may take a few minutes for long videos</span>
+            <div className="mt-2 w-48 h-1.5 rounded bg-line overflow-hidden">
+              <div className="h-full bg-trim animate-pulse rounded" style={{ width: "60%" }} />
+            </div>
           </div>
         ) : !transcript ? (
           <div className="flex h-64 flex-col items-center justify-center text-center p-6">

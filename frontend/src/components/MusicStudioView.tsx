@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Music, Play, Pause, Volume2, Sparkles, Check, Download, Loader2, AlertCircle } from "lucide-react";
-import { api, MusicTrack } from "../api";
+import { api, apiUrl, MusicTrack } from "../api";
 
 interface Props {
   projectId: string;
@@ -51,7 +51,7 @@ export function MusicStudioView({ projectId, selectedTrackId, onSelectTrack }: P
       setPlayingId(null);
     } else {
       if (audioEl) audioEl.pause();
-      const a = new Audio(t.url);
+      const a = new Audio(apiUrl(t.url));
       a.volume = 0.5;
       a.play();
       a.onended = () => setPlayingId(null);
@@ -180,6 +180,16 @@ export function MusicStudioView({ projectId, selectedTrackId, onSelectTrack }: P
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <a
+                      href={apiUrl(t.url)}
+                      download={`${t.name.replace(/\s+/g, "_")}.mp3`}
+                      className="inline-flex items-center gap-1 rounded border border-line bg-ink px-2.5 py-1 text-xs text-mute hover:text-paper hover:border-mute transition-colors"
+                      title="Download MP3"
+                    >
+                      <Download size={12} />
+                      MP3
+                    </a>
+
                     <button
                       onClick={() => onSelectTrack(isSelected ? null : t.id)}
                       className={`inline-flex items-center gap-1 rounded px-3 py-1 text-xs font-bold transition-colors ${
