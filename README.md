@@ -77,9 +77,11 @@ This automatically launches the FastAPI backend and serves the production studio
 Runs backend on `:8000` and Vite dev server on **`http://localhost:5173`**.
 
 ### Deploying the frontend separately
-The production frontend uses `VITE_API_BASE_URL` to call the backend; `frontend/.env.production` is set to `https://trim-vid.onrender.com`. If deploying to a frontend host that supports build environment variables, set `VITE_API_BASE_URL` there as well (the value is the backend origin, without a trailing slash), then rebuild/redeploy.
+The production frontend uses `VITE_API_BASE_URL` to call the backend. It is empty by default for same-origin deployments. If deploying to a separate frontend host, set `VITE_API_BASE_URL` to the backend origin (without a trailing slash) in the frontend build environment, then rebuild/redeploy.
 
 The deployed Render frontend origin `https://trim-vid-34.onrender.com` is allowed by default. If you use a different frontend domain, set `CORS_ORIGINS` on the backend to include that exact origin (no path or trailing slash); separate multiple origins with commas.
+
+The Render Docker service in `render.yaml` serves the frontend and API together, so leave `VITE_API_BASE_URL` empty for that deployment. If an upload reports HTTP 200 but returns a web page instead of JSON, the frontend is likely sending `/api/upload` to its own host rather than the backend; configure `VITE_API_BASE_URL` with the backend origin and rebuild. The editor accepts one video file at a time; use the Drive / ZIP importer for ZIP archives.
 
 ---
 

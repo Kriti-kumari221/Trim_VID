@@ -130,16 +130,19 @@ export const api = {
       x.open("POST", apiUrl("/api/upload"));
       x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
       x.onload = () => {
+        let b: any;
         try {
-          const b = JSON.parse(x.responseText);
-          if (x.status < 300) {
-            res(b);
-          } else {
-            rej(new Error(typeof b.detail === "string" ? b.detail : `Server error (${x.status}): ${JSON.stringify(b)}`));
-          }
+          b = JSON.parse(x.responseText);
         } catch {
-          rej(new Error(`Server returned HTTP ${x.status}: ${x.statusText || x.responseText.slice(0, 150) || "Upload failed"}`));
+          const isHtml = x.getResponseHeader("content-type")?.includes("text/html") || /^\s*</.test(x.responseText);
+          const detail = isHtml
+            ? "The upload request reached a web page, not the video API. If your frontend and backend are deployed separately, set VITE_API_BASE_URL to the backend URL and rebuild the frontend."
+            : x.responseText.slice(0, 150) || x.statusText || "empty response";
+          rej(new Error(`Server returned HTTP ${x.status}: ${detail}`));
+          return;
         }
+        if (x.status < 300) res(b);
+        else rej(new Error(typeof b.detail === "string" ? b.detail : `Server error (${x.status}): ${JSON.stringify(b)}`));
       };
       x.onerror = () => rej(new Error("Network connection error to server"));
       const fd = new FormData(); fd.append("file", file); x.send(fd);

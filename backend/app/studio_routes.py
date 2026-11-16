@@ -4,6 +4,7 @@ import shutil
 import time
 import uuid
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal

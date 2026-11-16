@@ -1,4 +1,4 @@
-import json, os, subprocess, tempfile, time
+import json, os, subprocess, tempfile, time, zipfile
 from pathlib import Path
 _test_tmp = Path(__file__).resolve().parent / "_test_data"
 _test_tmp.mkdir(parents=True, exist_ok=True)
@@ -112,6 +112,23 @@ def test_no_audio_video(tmp_path):
 def test_size_limit(sample, monkeypatch):
     monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 1000)
     assert up(sample).status_code == 413
+
+
+def test_google_drive_zip_import(monkeypatch):
+    from app import gdrive_service
+
+    def create_zip(_file_id, dest_path):
+        with zipfile.ZipFile(dest_path, "w") as archive:
+            archive.writestr("clips/readme.txt", "test")
+        return dest_path
+
+    monkeypatch.setattr(gdrive_service, "download_drive_file", create_zip)
+    response = client.post("/api/gdrive/import", json={"url": "https://drive.google.com/file/d/test-file/view"})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["type"] == "zip"
+    assert result["files"][0]["filename"] == "clips/readme.txt"
 
 
 def test_failed_job(vid, monkeypatch):
