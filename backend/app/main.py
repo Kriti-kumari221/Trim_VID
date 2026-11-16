@@ -13,6 +13,12 @@ from pydantic import BaseModel, Field
 from . import config
 from . import ffmpeg_utils as fx
 
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception:
+    pass
+
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mts", ".flv", ".wmv"}
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
 THUMBS = 16

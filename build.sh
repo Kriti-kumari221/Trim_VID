@@ -25,6 +25,7 @@ cd ..
 echo "Installing Python dependencies..."
 cd backend
 pip install -r requirements.txt
+python -c "import static_ffmpeg; static_ffmpeg.add_paths()" || true
 cd ..
 
 echo "=== Build Complete ==="

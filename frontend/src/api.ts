@@ -132,10 +132,16 @@ export const api = {
       x.onload = () => {
         try {
           const b = JSON.parse(x.responseText);
-          x.status < 300 ? res(b) : rej(new Error(typeof b.detail === "string" ? b.detail : "Upload failed"));
-        } catch { rej(new Error("Upload failed")); }
+          if (x.status < 300) {
+            res(b);
+          } else {
+            rej(new Error(typeof b.detail === "string" ? b.detail : `Server error (${x.status}): ${JSON.stringify(b)}`));
+          }
+        } catch {
+          rej(new Error(`Server returned HTTP ${x.status}: ${x.statusText || x.responseText.slice(0, 150) || "Upload failed"}`));
+        }
       };
-      x.onerror = () => rej(new Error("Network error"));
+      x.onerror = () => rej(new Error("Network connection error to server"));
       const fd = new FormData(); fd.append("file", file); x.send(fd);
     }),
   importUrl: (url: string) => post("/api/import-url", { url }).then(j<Job>),
