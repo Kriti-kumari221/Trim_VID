@@ -18,8 +18,14 @@ def extract_youtube_transcript_fast(youtube_url: str, project_id: Optional[str] 
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
+        "extractor_args": {"youtube": {"player_client": ["android"]}},
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        }
     }
+    cookie_file = config.DATA_DIR / "cookies.txt"
+    if cookie_file.is_file():
+        opts["cookiefile"] = str(cookie_file)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)

@@ -480,3 +480,18 @@ def export_project_zip_route(project_id: str):
         return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
     except Exception as e:
         raise HTTPException(500, str(e))
+
+class CookieReq(BaseModel):
+    cookies: str
+
+@router.get("/settings/cookies")
+def get_cookie_status():
+    cookie_path = config.DATA_DIR / "cookies.txt"
+    return {"configured": cookie_path.is_file() and cookie_path.stat().st_size > 0}
+
+@router.post("/settings/cookies")
+def save_cookies_route(req: CookieReq):
+    cookie_path = config.DATA_DIR / "cookies.txt"
+    cookie_path.parent.mkdir(parents=True, exist_ok=True)
+    cookie_path.write_text(req.cookies.strip(), encoding="utf-8")
+    return {"saved": True, "size": len(req.cookies)}

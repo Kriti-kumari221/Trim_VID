@@ -239,5 +239,11 @@ export const api = {
       .then((result) => ({ ...result, download_url: apiUrl(result.download_url) })),
     exports: (projectId: string) => fetch(apiUrl(`/api/projects/${projectId}/exports`)).then(j<ExportItem[]>),
     exportZipUrl: (projectId: string) => apiUrl(`/api/projects/${projectId}/export-zip`),
+  },
+
+  // Settings & Cloud YouTube Authentication
+  settings: {
+    getCookieStatus: () => fetch(apiUrl("/api/settings/cookies")).then(j<{ configured: boolean }>),
+    saveCookies: (cookies: string) => post("/api/settings/cookies", { cookies }).then(j<{ saved: boolean; size: number }>),
   }
 };

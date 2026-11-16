@@ -107,6 +107,32 @@ export default function App() {
   const [selectedMusicId, setSelectedMusicId] = useState<string | null>(null);
   const [selectedSubtitlePreset, setSelectedSubtitlePreset] = useState("viral_yellow");
   const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
+  const [cookieTxt, setCookieTxt] = useState("");
+  const [cookieConfigured, setCookieConfigured] = useState(false);
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieMsg, setCookieMsg] = useState("");
+
+  useEffect(() => {
+    if (panel === "settings") {
+      api.settings.getCookieStatus().then((r) => setCookieConfigured(r.configured)).catch(() => {});
+    }
+  }, [panel]);
+
+  const handleSaveCookies = async () => {
+    if (!cookieTxt.trim()) return;
+    setCookieSaving(true);
+    setCookieMsg("");
+    try {
+      await api.settings.saveCookies(cookieTxt);
+      setCookieConfigured(true);
+      setCookieMsg("Cookies saved successfully! YouTube downloads will now use authentication.");
+      setCookieTxt("");
+    } catch (e: any) {
+      setCookieMsg(`Failed to save cookies: ${e.message}`);
+    } finally {
+      setCookieSaving(false);
+    }
+  };
 
   const v = useRef<HTMLVideoElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -408,9 +434,9 @@ export default function App() {
 
       {/* Settings / Info Drawer */}
       {panel === "settings" && (
-        <div className="border-b border-line bg-panel px-6 py-4 text-xs">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="font-bold text-sm text-paper">Studio System Status</h4>
+        <div className="border-b border-line bg-panel px-6 py-4 text-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-bold text-sm text-paper">Studio System Status & Cloud Settings</h4>
             <button onClick={() => setPanel("")} className="text-mute hover:text-paper">
               <X size={16} />
             </button>
@@ -429,13 +455,57 @@ export default function App() {
               Audio Engine: <b className="text-paper">Procedural Synthesizer</b>
             </div>
           </div>
+
+          {/* YouTube Cloud Authentication Box */}
+          <div className="rounded-lg border border-line/70 bg-ink/50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-paper text-xs">
+                YouTube Cloud Downloader Auth
+              </span>
+              <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${cookieConfigured ? "bg-emerald-950 text-emerald-300 border border-emerald-500/30" : "bg-panel text-mute border border-line"}`}>
+                {cookieConfigured ? "Authenticated (cookies.txt active)" : "Android Player Profile (Default)"}
+              </span>
+            </div>
+            <p className="text-[11px] text-mute">
+              If YouTube restricts video downloads on cloud hosting providers (Render / AWS), you can paste the text of your exported Netscape <code>cookies.txt</code> below.
+            </p>
+            <div className="flex gap-2">
+              <textarea
+                value={cookieTxt}
+                onChange={(e) => setCookieTxt(e.target.value)}
+                placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE ... (paste cookies.txt here)"
+                rows={2}
+                className="flex-1 rounded border border-line bg-panel px-2.5 py-1.5 font-mono text-[10px] text-paper focus:outline-none"
+              />
+              <button
+                onClick={handleSaveCookies}
+                disabled={cookieSaving || !cookieTxt.trim()}
+                className="self-end rounded bg-trim px-3 py-1.5 font-bold text-xs text-ink hover:bg-amber-300 disabled:opacity-40"
+              >
+                {cookieSaving ? "Saving..." : "Save Cookies"}
+              </button>
+            </div>
+            {cookieMsg && (
+              <p className="text-[11px] text-emerald-400 font-medium">{cookieMsg}</p>
+            )}
+          </div>
         </div>
       )}
 
       {/* Error Banner */}
       {err && (
         <div role="alert" className="flex items-center justify-between border-b border-red-500/50 bg-red-950/80 px-5 py-2 text-xs text-red-200">
-          <span>{err}</span>
+          <div className="flex items-center gap-3">
+            <span>{err}</span>
+            {err.toLowerCase().includes("bot") && (
+              <button
+                onClick={() => setPanel("settings")}
+                className="rounded bg-red-800/80 px-2 py-0.5 text-[11px] font-bold text-white underline hover:bg-red-700"
+              >
+                Open YouTube Settings
+              </button>
+            )}
+          </div>
           <button onClick={() => setErr("")}>
             <X size={14} />
           </button>
