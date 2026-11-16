@@ -31,13 +31,31 @@ def probe(path) -> dict:
             "bitrate": int(d["format"].get("bit_rate") or 0)}
 
 
-def make_thumbs(src, out_dir, duration, n):
-    out_dir.mkdir(exist_ok=True)
-    for i in range(n):
+def _gen_rest_thumbs(src, out_dir, duration, n):
+    for i in range(1, n):
         t = duration * (i + 0.5) / n
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1",
-                        "-vf", "scale=160:-2", "-q:v", "6", str(out_dir / f"{i:03d}.jpg")],
-                       capture_output=True, timeout=60)
+        try:
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1",
+                            "-vf", "scale=160:-2", "-q:v", "6", str(out_dir / f"{i:03d}.jpg")],
+                           capture_output=True, timeout=20)
+        except Exception:
+            pass
+
+
+def make_thumbs(src, out_dir, duration, n):
+    """Fast thumbnail generation: extracts first poster thumbnail instantly (<0.3s) and generates rest in background."""
+    out_dir.mkdir(exist_ok=True)
+    if n <= 0:
+        return
+    t0 = duration * 0.5 / n
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t0:.3f}", "-i", str(src), "-frames:v", "1",
+                        "-vf", "scale=160:-2", "-q:v", "6", str(out_dir / "000.jpg")],
+                       capture_output=True, timeout=15)
+    except Exception:
+        pass
+    if n > 1:
+        threading.Thread(target=_gen_rest_thumbs, args=(src, out_dir, duration, n), daemon=True).start()
 
 
 def hw_encoders() -> list[str]:

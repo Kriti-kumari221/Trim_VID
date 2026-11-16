@@ -1,7 +1,7 @@
-import ipaddress, json, re, shutil, socket, threading, time, urllib.request, uuid
+import ipaddress, json, os, re, shutil, socket, threading, time, urllib.request, uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -125,9 +125,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _get_cookie_file() -> Optional[Path]:
+    """Checks for cookie file from environment variable YTDLP_COOKIES or local cookies.txt."""
+    cookie_content = os.getenv("YTDLP_COOKIES", "").strip()
+    if cookie_content:
+        cookie_path = config.DATA_DIR / "cookies.txt"
+        cookie_path.write_text(cookie_content, encoding="utf-8")
+        return cookie_path
+    local_cookie = config.DATA_DIR / "cookies.txt"
+    if local_cookie.is_file():
+        return local_cookie
+    base_cookie = config.BASE_DIR / "cookies.txt"
+    if base_cookie.is_file():
+        return base_cookie
+    return None
+
+
 def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
-    return {
+    opts = {
         "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
@@ -137,7 +153,17 @@ def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int)
         "max_filesize": max_bytes,
         "progress_hooks": [hook],
         "extractor_args": {"youtube": {"player_client": clients}},
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+        }
     }
+    cookie_file = _get_cookie_file()
+    if cookie_file:
+        opts["cookiefile"] = str(cookie_file)
+    proxy = os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+    if proxy:
+        opts["proxy"] = proxy
+    return opts
 
 
 def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
@@ -152,11 +178,12 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # Android client combined with iOS works consistently without JS challenges or bot blocks
+    # Priority order of clients resilient against datacenter bot checks
     client_configs = [
         ["android", "ios"],
         ["android"],
         ["ios"],
+        ["mweb"],
         ["tv_embedded"],
         ["web_embedded"],
         ["web"],
@@ -180,7 +207,12 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
                 except OSError: pass
             continue
 
-    raise RuntimeError(f"Could not download video from that URL. Last error: {last_exc}")
+    raise RuntimeError(
+        f"Could not download video from YouTube on this server IP. "
+        f"If deployed on a cloud host (like Render/AWS), YouTube may require cookies. "
+        f"Set YTDLP_COOKIES environment variable in Render, or upload the video directly. "
+        f"Details: {last_exc}"
+    )
 
 
 def _run_import_job(j: dict):

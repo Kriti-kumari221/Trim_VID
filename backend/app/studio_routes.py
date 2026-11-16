@@ -89,6 +89,10 @@ class GenerateMusicReq(BaseModel):
     genre: str = "cinematic"
     duration: float = 60.0
 
+class DetectMusicReq(BaseModel):
+    script_id: Optional[str] = None
+    api_key: Optional[str] = None
+
 class AssembleReq(BaseModel):
     clip_ids: List[str]
     music_track_id: Optional[str] = None
@@ -391,6 +395,15 @@ def generate_music_route(req: GenerateMusicReq, project_id: Optional[str] = None
         )
     except Exception as e:
         raise HTTPException(500, f"Music generation error: {e}")
+
+@router.post("/projects/{project_id}/music/detect-and-compose")
+def detect_music_from_script_route(project_id: str, req: Optional[DetectMusicReq] = None):
+    try:
+        script_id = req.script_id if req else None
+        api_key = req.api_key if req else None
+        return music_service.detect_and_compose_from_script(project_id, script_id, api_key)
+    except Exception as e:
+        raise HTTPException(500, f"Script-to-music composition failed: {e}")
 
 @router.get("/music/{track_id}/audio")
 def get_music_audio(track_id: str):

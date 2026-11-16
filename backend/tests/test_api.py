@@ -1,5 +1,8 @@
 import json, os, subprocess, tempfile, time
-os.environ["DATA_DIR"] = tempfile.mkdtemp()
+from pathlib import Path
+_test_tmp = Path(__file__).resolve().parent / "_test_data"
+_test_tmp.mkdir(parents=True, exist_ok=True)
+os.environ["DATA_DIR"] = str(_test_tmp)
 import pytest
 from fastapi.testclient import TestClient
 from app import main, ffmpeg_utils as fx

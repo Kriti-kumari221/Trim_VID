@@ -62,7 +62,7 @@ export type ScriptData = {
 
 export type MusicTrack = {
   id: string; project_id?: string; name: string; mood: string; genre: string; duration: number;
-  url: string; is_preset: boolean
+  url: string; is_preset: boolean; analysis_reason?: string; detected_mood?: string;
 };
 
 export type SubtitlePreset = {
@@ -213,6 +213,8 @@ export const api = {
     list: (projectId?: string) => fetch(apiUrl(`/api/music${projectId ? `?project_id=${projectId}` : ""}`)).then(j<MusicTrack[]>),
     generate: (mood: string, genre = "cinematic", duration = 60, projectId?: string) =>
       post(`/api/music/generate${projectId ? `?project_id=${projectId}` : ""}`, { mood, genre, duration }).then(j<MusicTrack>),
+    composeFromScript: (projectId: string, scriptId?: string, apiKey?: string) =>
+      post(`/api/projects/${projectId}/music/detect-and-compose`, { script_id: scriptId, api_key: apiKey }).then(j<MusicTrack>),
   },
 
   // Subtitles

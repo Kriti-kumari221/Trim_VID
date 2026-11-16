@@ -473,6 +473,7 @@ export default function App() {
         {activeTab === "music" && project && (
           <div className="flex-1 min-w-0">
             <MusicStudioView
+              project={project}
               projectId={project.id}
               selectedTrackId={selectedMusicId}
               onSelectTrack={setSelectedMusicId}
