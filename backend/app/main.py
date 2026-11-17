@@ -147,10 +147,10 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
+def _yt_opts_for_client(clients: list[str], fmt: str, out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
     opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/22/b/best",
+        "format": fmt,
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
@@ -183,19 +183,20 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # Priority order of clients resilient against datacenter bot checks
+    # (client, format) pairs — android/ios SABR streams only expose format 18 (360p progressive)
+    # web/mweb expose more adaptive formats that can be merged
     client_configs = [
-        ["android"],
-        ["android_vr"],
-        ["ios"],
-        ["mweb"],
-        ["tv_embedded"],
-        ["web"],
+        (["android"],      "18/22/17/36/best"),
+        (["android_vr"],   "18/22/17/36/best"),
+        (["ios"],          "18/22/best[ext=mp4]/best"),
+        (["mweb"],         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
+        (["tv_embedded"],  "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
+        (["web"],          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
     ]
 
     last_exc: Exception | None = None
-    for clients in client_configs:
-        opts = _yt_opts_for_client(clients, out_tmpl, _hook, MAX_UPLOAD_BYTES)
+    for clients, fmt in client_configs:
+        opts = _yt_opts_for_client(clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
