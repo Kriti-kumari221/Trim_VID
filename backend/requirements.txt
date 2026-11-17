@@ -9,3 +9,4 @@ faster-whisper
 python-docx
 python-dotenv
 static-ffmpeg
+youtube-transcript-api

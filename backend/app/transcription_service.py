@@ -11,104 +11,98 @@ from . import db, config
 # Global cache for whisper model instance
 _WHISPER_MODELS = {}
 
+def _get_cookie_file_ts() -> Optional[Path]:
+    """Return path to cookies.txt from env var, data dir, or base dir."""
+    env_cookies = os.getenv("YTDLP_COOKIES")
+    if env_cookies and env_cookies.strip():
+        cookie_path = config.DATA_DIR / "cookies.txt"
+        cookie_path.write_text(env_cookies, encoding="utf-8")
+        return cookie_path
+    local_cookie = config.DATA_DIR / "cookies.txt"
+    if local_cookie.is_file():
+        return local_cookie
+    base_cookie = config.BASE_DIR / "cookies.txt"
+    if base_cookie.is_file():
+        return base_cookie
+    return None
+
+
 def extract_youtube_transcript_fast(youtube_url: str, project_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Instant transcript extraction from YouTube's native timed captions (takes ~1s like Tactiq)."""
-    import yt_dlp
-    opts = {
-        "skip_download": True,
-        "quiet": True,
-        "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["android"]}},
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        }
-    }
-    cookie_file = config.DATA_DIR / "cookies.txt"
-    if cookie_file.is_file():
-        opts["cookiefile"] = str(cookie_file)
+    """Instant transcript extraction using youtube-transcript-api (no yt-dlp format issues)."""
+    import re
+    # Extract video ID from URL
+    match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", youtube_url)
+    if not match:
+        print("Warning: could not extract video ID from URL")
+        return None
+    video_id = match.group(1)
+
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
-            auto_subs = info.get("automatic_captions") or {}
-            subs = info.get("subtitles") or {}
-            
-            all_subs = {**auto_subs, **subs}
-            if not all_subs:
-                return None
-                
-            # Language preference: en, then hi, then en-orig, then first available
-            chosen_lang = (
-                "en" if "en" in all_subs else
-                ("hi" if "hi" in all_subs else
-                ("en-orig" if "en-orig" in all_subs else
-                list(all_subs.keys())[0]))
-            )
-            
-            sub_list = all_subs[chosen_lang]
-            target = next((s for s in sub_list if s.get("ext") == "json3"), sub_list[0] if sub_list else None)
-            if not target or not target.get("url"):
-                return None
-                
-            req = urllib.request.Request(target["url"], headers={"User-Agent": "Mozilla/5.0"})
-            raw_data = urllib.request.urlopen(req, timeout=12).read().decode("utf-8")
-            data = json.loads(raw_data)
-            events = data.get("events", [])
-            
-            segments = []
-            full_text_parts = []
-            speaker = "Speaker 1"
-            last_end = 0.0
-            
-            for ev in events:
-                tStartMs = ev.get("tStartMs", 0)
-                dDurationMs = ev.get("dDurationMs", 0)
-                segs = ev.get("segs", [])
-                text = "".join(s.get("utf8", "") for s in segs).strip().replace("\n", " ")
-                if not text or text == "\n":
-                    continue
-                start = round(tStartMs / 1000.0, 2)
-                end = round((tStartMs + dDurationMs) / 1000.0, 2)
-                if end <= start:
-                    end = round(start + 2.0, 2)
-                    
-                # Heuristic speaker turn on pauses > 1.8s
-                if last_end > 0 and (start - last_end) > 1.8:
-                    speaker = "Speaker 2" if speaker == "Speaker 1" else "Speaker 1"
-                last_end = end
-                
-                segments.append({
-                    "id": uuid.uuid4().hex[:8],
-                    "start": start,
-                    "end": end,
-                    "speaker": speaker,
-                    "text": text
-                })
-                full_text_parts.append(text)
-                
-            if not segments:
-                return None
-                
-            full_text = " ".join(full_text_parts)
-            
-            # Save to DB if project_id is given
-            if project_id:
-                conn = db.get_connection()
-                c = conn.cursor()
-                c.execute("""
-                    INSERT OR REPLACE INTO transcripts (id, project_id, language, full_text, segments_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (uuid.uuid4().hex, project_id, chosen_lang, full_text, json.dumps(segments), time.time()))
-                conn.commit()
-                conn.close()
-                
-            return {
-                "project_id": project_id,
-                "language": chosen_lang,
-                "full_text": full_text,
-                "segments": segments
-            }
+        from youtube_transcript_api import YouTubeTranscriptApi
+        api = YouTubeTranscriptApi()
+        # Try languages in priority order
+        try:
+            transcript_data = api.fetch(video_id, languages=["en", "en-US", "en-GB", "hi", "en-orig"])
+        except Exception:
+            # Fall back to any available language
+            transcript_data = api.fetch(video_id)
+
+        snippets = transcript_data.snippets
+        if not snippets:
+            return None
+
+        segments = []
+        full_text_parts = []
+        speaker = "Speaker 1"
+        last_end = 0.0
+
+        for snip in snippets:
+            text = snip.text.strip().replace("\n", " ")
+            if not text or text == "[Music]" or text == "[संगीत]":
+                continue
+            start = round(float(snip.start), 2)
+            end = round(float(snip.start) + float(snip.duration), 2)
+            if end <= start:
+                end = round(start + 2.0, 2)
+
+            if last_end > 0 and (start - last_end) > 1.8:
+                speaker = "Speaker 2" if speaker == "Speaker 1" else "Speaker 1"
+            last_end = end
+
+            segments.append({
+                "id": uuid.uuid4().hex[:8],
+                "start": start,
+                "end": end,
+                "speaker": speaker,
+                "text": text
+            })
+            full_text_parts.append(text)
+
+        if not segments:
+            return None
+
+        full_text = " ".join(full_text_parts)
+        chosen_lang = getattr(transcript_data, "language_code", "en")
+
+        if project_id:
+            conn = db.get_connection()
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR REPLACE INTO transcripts (id, project_id, language, full_text, segments_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (uuid.uuid4().hex, project_id, chosen_lang, full_text, json.dumps(segments), time.time()))
+            conn.commit()
+            conn.close()
+
+        return {
+            "project_id": project_id,
+            "language": chosen_lang,
+            "full_text": full_text,
+            "segments": segments
+        }
+
     except Exception as e:
-        print(f"Warning: fast YouTube transcript extraction failed: {e}")
+        print(f"Warning: youtube-transcript-api failed for {video_id}: {e}")
         return None
 
 def get_whisper_model(model_size: str = "base", device: str = "auto"):
