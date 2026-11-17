@@ -150,7 +150,7 @@ def _get_cookie_file() -> Optional[Path]:
 def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
     opts = {
-        "format": "best[ext=mp4]/b/18/bestvideo*+bestaudio/best",
+        "format": "best[ext=mp4]/b/18/22/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
@@ -200,15 +200,18 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 title = info.get("title") or "remote-video"
-            candidates = list(d.glob("source.*"))
+            candidates = [f for f in d.iterdir() if f.is_file() and not f.name.endswith(".part") and f.stat().st_size > 1000]
             if candidates:
                 return candidates[0], title
+            else:
+                last_exc = RuntimeError(f"Client {clients} finished without downloading output file.")
         except Exception as e:
             last_exc = e
             # Clean up partial download before retrying with next client
-            for f in d.glob("source.*"):
-                try: f.unlink()
-                except OSError: pass
+            for f in d.glob("*"):
+                if f.is_file() and not f.name.startswith("meta"):
+                    try: f.unlink()
+                    except OSError: pass
             continue
 
     raise RuntimeError(
