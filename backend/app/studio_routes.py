@@ -508,6 +508,8 @@ class CreateAutoShortsReq(BaseModel):
 class RenderApprovedReq(BaseModel):
     clips: List[Dict[str, Any]]
     font_file: Optional[str] = None
+    casing: Optional[str] = "uppercase"
+    animation_effect: Optional[str] = "scale_pop"
 
 class ProceedAISelectionReq(BaseModel):
     custom_transcript: Optional[List[Dict[str, Any]]] = None
@@ -577,7 +579,7 @@ def render_auto_shorts_route(job_id: str, req: RenderApprovedReq):
     try:
         threading.Thread(
             target=auto_shorts_service.render_approved_auto_shorts,
-            args=(job_id, req.clips, req.font_file),
+            args=(job_id, req.clips, req.font_file, req.casing, req.animation_effect),
             daemon=True
         ).start()
         return {"status": "rendering_started", "job_id": job_id}

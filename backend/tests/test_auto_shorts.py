@@ -60,7 +60,7 @@ def test_build_filter_complex(tmp_path):
     sub_file.write_text("[Script Info]", encoding="utf-8")
     fc, out_label = template_service.build_template_filter_complex(template, sub_file)
     assert "pad=1080:1920" in fc
-    assert "drawtext=" in fc
-    assert "drawbox=" in fc
+    # Header is either overlaid via authentic logo png or drawn with drawtext & gold drawbox lines
+    assert ("overlay=" in fc or "drawtext=" in fc)
     assert "subtitles=" in fc
     assert out_label == "v_out"

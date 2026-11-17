@@ -1,47 +1,38 @@
 import json
 import os
-import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from . import config
 
-def load_template(template_id_or_path: str) -> Dict[str, Any]:
-    """Loads a template JSON by id (from backend/data/templates) or absolute path."""
-    p = Path(template_id_or_path)
-    if not p.is_file():
-        if not template_id_or_path.endswith(".json"):
-            template_id_or_path = f"{template_id_or_path}.json"
-        p = config.BASE_DIR / "data" / "templates" / template_id_or_path
-    
-    if not p.is_file():
-        # Fallback to default Acharya Prashant Classic
-        p = config.BASE_DIR / "data" / "templates" / "acharya_prashant_classic.json"
-    
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+def load_template(template_id: str = "acharya_prashant_classic") -> Dict[str, Any]:
+    templates_dir = (config.BASE_DIR / "data" / "templates").resolve()
+    t_file = templates_dir / f"{template_id}.json"
+    if not t_file.is_file():
+        t_file = templates_dir / "acharya_prashant_classic.json"
+    if t_file.is_file():
+        return json.loads(t_file.read_text(encoding="utf-8"))
+    return {}
 
 def list_templates() -> List[Dict[str, Any]]:
-    """Returns list of all available templates."""
-    templates_dir = config.BASE_DIR / "data" / "templates"
-    templates_dir.mkdir(parents=True, exist_ok=True)
+    templates_dir = (config.BASE_DIR / "data" / "templates").resolve()
+    if not templates_dir.is_dir():
+        return []
     res = []
     for f in templates_dir.glob("*.json"):
         try:
-            with open(f, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-                res.append({
-                    "id": f.stem,
-                    "name": data.get("name", f.stem),
-                    "version": data.get("version", "1.0"),
-                    "canvas": data.get("canvas", {"width": 1080, "height": 1920}),
-                    "file_path": str(f)
-                })
+            data = json.loads(f.read_text(encoding="utf-8"))
+            res.append({
+                "id": data.get("id", f.stem),
+                "name": data.get("name", f.stem),
+                "canvas": data.get("canvas", {}),
+                "header": data.get("header", {})
+            })
         except Exception:
-            continue
+            pass
     return res
 
 def format_ass_time(seconds: float) -> str:
-    """Formats seconds to ASS timestamp: H:MM:SS.cc"""
+    """Formats float seconds into ASS timestamp H:MM:SS.cs"""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
@@ -95,14 +86,15 @@ def group_words_into_chunks(word_segments: List[Dict[str, Any]], words_per_chunk
 def generate_ass_subtitles(
     chunks: List[Dict[str, Any]],
     template: Dict[str, Any],
-    output_path: Path
+    output_path: Path,
+    casing: str = "default",  # "default", "uppercase", "lowercase"
+    animation_effect: str = "glow_punch"  # "glow_punch", "scale_pop", "clean"
 ) -> Path:
     """
-    Generates an Advanced SubStation Alpha (.ass) file with:
-    - Khand-Bold font with Noto Sans Devanagari fallback
-    - Cream-yellow fill (&H00C8FAF5& in ASS BGR hex)
-    - Dark bold outline
-    - Secondary soft glow layer for glowing aesthetic
+    Generates a professional ASS subtitle script:
+    - Text casing support (UPPERCASE like YouTube Shorts / Acharya Prashant samples)
+    - Animated subtitle punch-in effects (\t(0, 100, \fscx112\fscy112) -> \t(100, 200, \fscx100\fscy100))
+    - Dual layer: Layer 0 warm diffuse glow, Layer 1 ultra-sharp text with bold dark outline.
     """
     sub_cfg = template.get("subtitles", {})
     canvas = template.get("canvas", {"width": 1080, "height": 1920})
@@ -110,16 +102,20 @@ def generate_ass_subtitles(
     ch = canvas.get("height", 1920)
     
     font_name = Path(sub_cfg.get("font_file", "Khand-Bold.ttf")).stem
-    font_size = sub_cfg.get("font_size", 64)
-    primary_color = sub_cfg.get("primary_color", "&H00C8FAF5&")
+    font_size = sub_cfg.get("font_size", 66)
+    primary_color = sub_cfg.get("primary_color", "&H00C8FAF5&")  # Cream yellow in BGR
     outline_color = sub_cfg.get("outline_color", "&H00101010&")
-    outline_width = sub_cfg.get("outline_width", 4.5)
+    outline_width = sub_cfg.get("outline_width", 5.0)
     shadow_color = sub_cfg.get("shadow_color", "&H80000000&")
     shadow_depth = sub_cfg.get("shadow_depth", 2)
     glow_color = sub_cfg.get("glow_color", "&H401490D4&")
     margin_v = sub_cfg.get("margin_v", 240)
     alignment = sub_cfg.get("alignment", 2)  # Bottom-center
     
+    # Check template override for uppercase
+    if sub_cfg.get("uppercase", False):
+        casing = "uppercase"
+
     ass_content = f"""[Script Info]
 Title: Acharya Prashant Vertical Shorts
 ScriptType: v4.00+
@@ -132,7 +128,7 @@ PlayResY: {ch}
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,{font_name},{font_size},{primary_color},&H000000FF&,{outline_color},{shadow_color},-1,0,0,0,100,100,1,0,1,{outline_width},{shadow_depth},{alignment},60,60,{margin_v},1
-Style: Glow,{font_name},{font_size},{glow_color},&H000000FF&,{glow_color},{glow_color},-1,0,0,0,100,100,1,0,1,{outline_width + 4.0},0,{alignment},60,60,{margin_v},1
+Style: Glow,{font_name},{font_size},{glow_color},&H000000FF&,{glow_color},{glow_color},-1,0,0,0,100,100,1,0,1,{outline_width + 4.5},0,{alignment},60,60,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -141,10 +137,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         t_start = format_ass_time(c["start"])
         t_end = format_ass_time(c["end"])
         raw_text = c["text"].replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
-        # Layer 0: Glow outline under layer
-        ass_content += f"Dialogue: 0,{t_start},{t_end},Glow,,0,0,0,,{{\\blur6}}{raw_text}\n"
-        # Layer 1: Sharp text with crisp border on top
-        ass_content += f"Dialogue: 1,{t_start},{t_end},Default,,0,0,0,,{raw_text}\n"
+        
+        if casing == "uppercase":
+            raw_text = raw_text.upper()
+        elif casing == "lowercase":
+            raw_text = raw_text.lower()
+            
+        # Dynamic animated punch-in effect (pop in on entrance, then settle)
+        if animation_effect == "scale_pop":
+            anim_tag = r"{\t(0,90,\fscx118\fscy118)\t(90,180,\fscx100\fscy100)}"
+            glow_anim = r"{\blur6\t(0,90,\fscx118\fscy118)\t(90,180,\fscx100\fscy100)}"
+        elif animation_effect == "glow_punch":
+            anim_tag = r"{\t(0,80,\fscx108\fscy108)\t(80,160,\fscx100\fscy100)}"
+            glow_anim = r"{\blur7\t(0,80,\fscx108\fscy108)\t(80,160,\fscx100\fscy100)}"
+        else:
+            anim_tag = ""
+            glow_anim = r"{\blur6}"
+
+        # Layer 0: Diffuse warm glow
+        ass_content += f"Dialogue: 0,{t_start},{t_end},Glow,,0,0,0,,{glow_anim}{raw_text}\n"
+        # Layer 1: Sharp crisp primary text
+        ass_content += f"Dialogue: 1,{t_start},{t_end},Default,,0,0,0,,{anim_tag}{raw_text}\n"
         
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8-sig") as f:
@@ -159,13 +172,14 @@ def build_template_filter_complex(
     crop_y: Optional[int] = None,
     crop_w: Optional[int] = None,
     crop_h: Optional[int] = None,
-) -> str:
+    header_banner_path: Optional[Path] = None
+) -> Tuple[str, str]:
     """
     Constructs the exact FFmpeg filter_complex graph to build 1080x1920 vertical Shorts:
     1. Base 1080x1920 black canvas.
-    2. Header text "ACHARYA PRASHANT" in bold uppercase + gold divider line below.
-    3. Main video centered square/rectangle crop zoomed on speaker.
-    4. Burned-in ASS subtitles with fontsdir path escaping.
+    2. Header: uses authentic AP logo banner PNG if available, or crisp text with top/bottom gold borders.
+    3. Speaker crop: auto-centered on detected speaker face with smooth square framing.
+    4. Subtitles: burned-in ASS subtitles with fontsdir path escaping.
     """
     cw = template.get("canvas", {}).get("width", 1080)
     ch = template.get("canvas", {}).get("height", 1920)
@@ -176,23 +190,12 @@ def build_template_filter_complex(
     th = vf.get("target_height", 1080)
     v_pos_y = vf.get("position_y", 420)
     
-    hdr = template.get("header", {})
-    hdr_enabled = hdr.get("enabled", True)
-    hdr_text = hdr.get("text", "ACHARYA PRASHANT")
-    hdr_size = hdr.get("font_size", 48)
-    hdr_y = hdr.get("position_y", 140)
-    hdr_color = hdr.get("font_color", "#FFFFFF")
-    
-    div = hdr.get("divider_line", {})
-    div_enabled = div.get("enabled", True)
-    div_w = div.get("width", 780)
-    div_h = div.get("thickness", 3)
-    div_color = div.get("color", "#D4AF37")
-    div_y = hdr_y + div.get("margin_top", 24)
-    div_x = int((cw - div_w) / 2)
-    
     fonts_dir = (config.BASE_DIR / "data" / "fonts").resolve()
     fonts_dir_escaped = str(fonts_dir).replace("\\", "/").replace(":", "\\:")
+    
+    # Check for authentic user header banner logo PNG
+    default_banner = (config.BASE_DIR / "data" / "templates" / "ap_header_logo.png").resolve()
+    banner_to_use = header_banner_path or (default_banner if default_banner.is_file() else None)
     
     # 1. Video Crop & Scale chain
     if crop_w and crop_h and crop_x is not None and crop_y is not None:
@@ -203,35 +206,41 @@ def build_template_filter_complex(
         
     scale_video = f"[0:v]{crop_filter},scale={tw}:{th}:flags=lanczos[scaled_vid]"
     
-    # 2. Pad to 1080x1920 (centered with black borders top and bottom)
-    # y=(1920-1080)/2 = 420 exactly!
+    # 2. Pad to 1080x1920 centered canvas
     pad_canvas = f"[scaled_vid]pad={cw}:{ch}:(ow-iw)/2:{v_pos_y}:color={bg_color}[v1]"
-    
     current_out = "v1"
     
-    # 4. Header text and gold divider line
-    if hdr_enabled:
+    # 3. Header
+    header_filter = ""
+    if banner_to_use and banner_to_use.is_file():
+        # Overlay the exact authentic Acharya Prashant header banner PNG scaled across width
+        banner_escaped = str(banner_to_use).replace("\\", "/").replace(":", "\\:")
+        # Scale banner to width 1080, maintaining aspect ratio (~1080x92)
+        # Position at Y=100
+        hdr_overlay = (
+            f"movie='{banner_escaped}',scale={cw}:-1[banner];"
+            f"[{current_out}][banner]overlay=(W-w)/2:90[v2]"
+        )
+        header_filter = hdr_overlay
+        current_out = "v2"
+    else:
+        hdr = template.get("header", {})
+        hdr_text = hdr.get("text", "A C H A R Y A   P R A S H A N T")
         hdr_font = fonts_dir / hdr.get("font_file", "Khand-Bold.ttf")
         hdr_font_escaped = str(hdr_font).replace("\\", "/").replace(":", "\\:")
         
-        # drawtext for header
+        # Dual gold lines (top & bottom like official YouTube shorts sample)
+        gold_color = "#E5B83B"
+        draw_top_line = f"drawbox=x=0:y=100:w={cw}:h=4:color={gold_color}:t=fill"
         draw_hdr = (
             f"drawtext=fontfile='{hdr_font_escaped}':text='{hdr_text}':"
-            f"fontsize={hdr_size}:fontcolor={hdr_color}:x=(w-text_w)/2:y={hdr_y}"
+            f"fontsize=46:fontcolor=white:x=(w-text_w)/2:y=125"
         )
-        
-        if div_enabled:
-            # drawbox for gold line
-            draw_line = f"drawbox=x={div_x}:y={div_y}:w={div_w}:h={div_h}:color={div_color}:t=fill"
-            header_filter = f"[{current_out}]{draw_hdr},{draw_line}[v2]"
-        else:
-            header_filter = f"[{current_out}]{draw_hdr}[v2]"
-            
+        draw_bot_line = f"drawbox=x=0:y=188:w={cw}:h=4:color={gold_color}:t=fill"
+        header_filter = f"[{current_out}]{draw_top_line},{draw_hdr},{draw_bot_line}[v2]"
         current_out = "v2"
-    else:
-        header_filter = ""
         
-    # 5. Burn-in ASS Subtitles if provided
+    # 4. Burn-in ASS Subtitles
     ass_path_obj = Path(ass_subtitles_path) if ass_subtitles_path else None
     if ass_path_obj and ass_path_obj.is_file():
         ass_escaped = str(ass_path_obj.resolve()).replace("\\", "/").replace(":", "\\:")

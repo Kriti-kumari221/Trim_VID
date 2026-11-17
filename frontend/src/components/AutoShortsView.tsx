@@ -17,6 +17,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
   const [url, setUrl] = useState(defaultUrl || "https://www.youtube.com/watch?v=NkMC9IXCRRs");
   const [templateId, setTemplateId] = useState("acharya_prashant_classic");
   const [selectedFont, setSelectedFont] = useState("Khand-Bold.ttf");
+  const [subtitleCasing, setSubtitleCasing] = useState<string>("uppercase");
+  const [animationEffect, setAnimationEffect] = useState<string>("scale_pop");
   const [numClips, setNumClips] = useState(5);
   const [templates, setTemplates] = useState<any[]>([]);
   const [fonts, setFonts] = useState<any[]>([]);
@@ -121,7 +123,7 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
     }
     setLoading(true);
     try {
-      await api.autoShorts.renderApproved(jobId, accepted, selectedFont);
+      await api.autoShorts.renderApproved(jobId, accepted, selectedFont, subtitleCasing, animationEffect);
       setCurrentViewTab("pipeline");
     } catch (err: any) {
       setError(err.message || "Failed to trigger rendering");
@@ -246,7 +248,7 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div>
                 <label className="block text-xs font-bold text-mute uppercase tracking-wider mb-1.5">
                   Design Template
@@ -257,6 +259,7 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                   className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
                 >
                   <option value="acharya_prashant_classic">Acharya Prashant Classic (1080x1920)</option>
+                  <option value="acharya_prashant_split">Acharya Prashant Dual Split (Multi-Speaker)</option>
                   {templates.map((t) => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
@@ -276,6 +279,36 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                   <option value="NotoSansDevanagari-Bold.ttf">Noto Sans Devanagari</option>
                   <option value="Arial-Bold.ttf">Arial Bold</option>
                   <option value="Impact.ttf">Impact</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-mute uppercase tracking-wider mb-1.5">
+                  Subtitle Casing
+                </label>
+                <select
+                  value={subtitleCasing}
+                  onChange={(e) => setSubtitleCasing(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                >
+                  <option value="uppercase">UPPERCASE (Standard)</option>
+                  <option value="lowercase">lowercase</option>
+                  <option value="default">Default / Normal</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-mute uppercase tracking-wider mb-1.5">
+                  Animation Effect
+                </label>
+                <select
+                  value={animationEffect}
+                  onChange={(e) => setAnimationEffect(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                >
+                  <option value="scale_pop">Scale Pop (Punch-in Zoom)</option>
+                  <option value="glow_punch">Glow Punch & Bold</option>
+                  <option value="clean">Clean Minimal</option>
                 </select>
               </div>
 
@@ -502,14 +535,55 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
       {/* AI Clips Review & Manual Edit View */}
       {job && currentViewTab === "clips" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-panel p-4 rounded-xl border border-line">
             <div>
               <h3 className="text-base font-bold text-paper">Review & Adjust Selected Shorts</h3>
               <p className="text-xs text-mute">
-                Edit titles, adjust start/end timings, or add custom clips before rendering.
+                Edit titles, adjust start/end timings, and customize typography effects before rendering.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-canvas px-2.5 py-1 rounded-lg border border-line text-xs">
+                <span className="text-mute font-medium">Font:</span>
+                <select
+                  value={selectedFont}
+                  onChange={(e) => setSelectedFont(e.target.value)}
+                  className="bg-transparent text-paper font-bold focus:outline-none"
+                >
+                  <option value="Khand-Bold.ttf">Khand Bold</option>
+                  <option value="NotoSansDevanagari-Bold.ttf">Noto Sans Devanagari</option>
+                  <option value="Arial-Bold.ttf">Arial Bold</option>
+                  <option value="Impact.ttf">Impact</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-canvas px-2.5 py-1 rounded-lg border border-line text-xs">
+                <span className="text-mute font-medium">Case:</span>
+                <select
+                  value={subtitleCasing}
+                  onChange={(e) => setSubtitleCasing(e.target.value)}
+                  className="bg-transparent text-paper font-bold focus:outline-none"
+                >
+                  <option value="uppercase">UPPERCASE</option>
+                  <option value="lowercase">lowercase</option>
+                  <option value="default">Default</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-canvas px-2.5 py-1 rounded-lg border border-line text-xs">
+                <span className="text-mute font-medium">FX:</span>
+                <select
+                  value={animationEffect}
+                  onChange={(e) => setAnimationEffect(e.target.value)}
+                  className="bg-transparent text-paper font-bold focus:outline-none"
+                >
+                  <option value="scale_pop">Scale Pop</option>
+                  <option value="glow_punch">Glow Punch</option>
+                  <option value="clean">Clean</option>
+                </select>
+              </div>
+
               <button
                 onClick={handleAddManualClip}
                 className="rounded-lg border border-line bg-panel hover:bg-canvas text-xs font-semibold px-3 py-1.5 text-paper flex items-center gap-1"

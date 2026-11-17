@@ -12,14 +12,17 @@ def render_short_clip(
     template_id: str = "acharya_prashant_classic",
     crop_rect: Optional[Dict[str, int]] = None,
     custom_subtitles: Optional[List[Dict[str, Any]]] = None,
+    casing: str = "uppercase",
+    animation_effect: str = "glow_punch",
+    font_file: Optional[str] = None,
     on_progress=None,
 ) -> Path:
     """
     Renders a vertical 9:16 short clip:
     1. Cuts frame-accurately between start_time and end_time.
-    2. Runs faster-whisper with word_timestamps=True (or uses custom_subtitles if edited).
-    3. Groups words into 1-3 word chunks.
-    4. Generates animated glowing ASS subtitles.
+    2. Runs faster-whisper word_timestamps=True (or uses custom_subtitles if edited).
+    3. Groups words into 1-3 word punchy chunks with uppercase & scale-pop animation.
+    4. Generates dual-layer ASS subtitles with soft warm glow.
     5. Single-pass FFmpeg filter_complex rendering to 1080x1920 @ 30fps.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,7 +34,7 @@ def render_short_clip(
     
     try:
         # Step 1: Accurate cut
-        duration = end_time - start_time
+        duration = max(0.5, end_time - start_time)
         cut_cmd = [
             "ffmpeg", "-y", "-hide_banner", "-nostdin",
             "-ss", str(start_time),
@@ -45,12 +48,15 @@ def render_short_clip(
         
         # Step 2: Subtitle word chunks
         template = template_service.load_template(template_id)
+        if font_file:
+            template.setdefault("subtitles", {})["font_file"] = font_file
+            
         words_per_chunk = template.get("subtitles", {}).get("words_per_chunk", 2)
         
         if custom_subtitles:
             chunks = custom_subtitles
         else:
-            # Transcribe with faster-whisper word timestamps
+            # Transcribe with faster-whisper word timestamps (with timeout safety)
             words = []
             try:
                 model = transcription_service.get_whisper_model("base")
@@ -58,7 +64,7 @@ def render_short_clip(
                     segments, _ = model.transcribe(
                         str(clip_cut),
                         word_timestamps=True,
-                        beam_size=5,
+                        beam_size=3,
                         vad_filter=True
                     )
                     for seg in segments:
@@ -70,19 +76,23 @@ def render_short_clip(
                                     "end": w.end
                                 })
             except Exception as e:
-                print(f"Warning: word timestamp transcription fallback: {e}")
+                print(f"Word timestamp transcription fallback: {e}")
                 
             if words:
                 chunks = template_service.group_words_into_chunks(words, words_per_chunk=words_per_chunk)
             else:
-                # Default sample test words if silent/audio-less
                 chunks = [
-                    {"start": 0.5, "end": 2.5, "text": "खुद को हराना"},
-                    {"start": 2.6, "end": 4.8, "text": "सीखो पहले"},
-                    {"start": 5.0, "end": 7.5, "text": "ACHARYA PRASHANT"}
+                    {"start": 0.5, "end": 2.5, "text": "ACHARYA PRASHANT"},
+                    {"start": 2.6, "end": 4.8, "text": "DISCOURSE INSIGHT"}
                 ]
                 
-        template_service.generate_ass_subtitles(chunks, template, ass_file)
+        template_service.generate_ass_subtitles(
+            chunks=chunks,
+            template=template,
+            output_path=ass_file,
+            casing=casing,
+            animation_effect=animation_effect
+        )
         
         # Step 3: Filter complex
         cx = crop_rect.get("x") if crop_rect else None
@@ -96,14 +106,14 @@ def render_short_clip(
             crop_x=cx, crop_y=cy, crop_w=cw, crop_h=ch
         )
         
-        # Step 4: Final rendering
+        # Step 4: Final single-pass rendering
         render_cmd = [
             "ffmpeg", "-y", "-hide_banner", "-nostdin",
             "-i", str(clip_cut),
             "-filter_complex", filter_complex,
             "-map", f"[{out_label}]",
             "-map", "0:a?",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-r", "30", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
@@ -114,6 +124,5 @@ def render_short_clip(
         return output_path
         
     finally:
-        # Cleanup temporary files
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)

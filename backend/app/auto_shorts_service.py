@@ -288,7 +288,9 @@ def proceed_to_ai_selection(job_id: str, custom_transcript: Optional[List[Dict[s
 def render_approved_auto_shorts(
     job_id: str,
     approved_clips: List[Dict[str, Any]],
-    font_file: Optional[str] = None
+    font_file: Optional[str] = None,
+    casing: str = "uppercase",
+    animation_effect: str = "scale_pop"
 ):
     """
     Renders approved short clips with the template engine, saves them to DB clips & exports table.
@@ -335,7 +337,10 @@ def render_approved_auto_shorts(
             end_time=float(clip["end"]),
             template_id=template_id,
             crop_rect=clip.get("crop_rect"),
-            custom_subtitles=clip.get("custom_subtitles")
+            custom_subtitles=clip.get("custom_subtitles"),
+            font_file=font_file,
+            casing=casing,
+            animation_effect=animation_effect
         )
         
         # Save into database clips table
