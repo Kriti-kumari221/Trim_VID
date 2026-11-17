@@ -208,7 +208,7 @@ export default function App() {
     setCur(n);
   };
 
-  const loaded = async (r: Loaded) => {
+  const loaded = async (r: Loaded & { initial_transcript?: any }) => {
     setVid(r.video_id);
     setMeta(r.metadata);
     setStartS(0);
@@ -218,7 +218,7 @@ export default function App() {
     setPreview("");
     setErr("");
 
-    // Attach to current project
+    // Attach to current project or auto-create project so tabs work immediately
     if (project) {
       const updated = await api.projects.update(project.id, {
         video_id: r.video_id,
@@ -226,7 +226,39 @@ export default function App() {
         video_duration: r.metadata.duration,
         thumbnail_url: apiUrl(`/api/video/${r.video_id}/thumbs/0`),
       });
-      if (updated) setProject(updated);
+      if (updated) {
+        if (r.initial_transcript?.segments && !updated.has_transcript) {
+          try {
+            await api.transcription.update(project.id, r.initial_transcript.segments);
+            const fresh = await api.projects.get(project.id);
+            setProject(fresh);
+          } catch {
+            setProject(updated);
+          }
+        } else {
+          setProject(updated);
+        }
+      }
+    } else {
+      try {
+        const title = r.metadata.name?.replace(/\.[^/.]+$/, "") || "Studio Video Project";
+        const newProj = await api.projects.create(title, "Projects", r.video_id);
+        if (newProj) {
+          if (r.initial_transcript?.segments) {
+            try {
+              await api.transcription.update(newProj.id, r.initial_transcript.segments);
+              const fresh = await api.projects.get(newProj.id);
+              setProject(fresh);
+            } catch {
+              setProject(newProj);
+            }
+          } else {
+            setProject(newProj);
+          }
+        }
+      } catch (e) {
+        console.warn("Auto project creation error:", e);
+      }
     }
   };
 
@@ -244,33 +276,37 @@ export default function App() {
   };
 
   const importFromUrl = async () => {
-    if (!url || busy) return;
+    if (!url.trim() || busy) return;
+    let targetUrl = url.trim();
+    if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+      targetUrl = "https://" + targetUrl;
+    }
     setErr("");
-    setBusy("Importing YouTube video");
+    setBusy("Connecting to YouTube…");
     setPct(0);
     try {
       // Start async import job on the backend
-      const importJob = await api.importUrl(url);
+      const importJob = await api.importUrl(targetUrl);
       let j = importJob;
       // Poll until done
       while (j.status === "queued" || j.status === "running") {
         await new Promise((r) => setTimeout(r, 1200));
         j = await api.job(j.id);
-        setPct(j.progress);
-        if (j.status === "running" && j.progress < 0.1) {
-          setBusy("Connecting to YouTube…");
+        setPct(j.progress || 0);
+        if (j.status === "running" && (!j.progress || j.progress < 0.05)) {
+          setBusy("Extracting video & audio streams…");
         } else if (j.status === "running") {
-          setBusy(`Downloading video… ${Math.round(j.progress * 100)}%`);
+          setBusy(`Downloading YouTube video… ${Math.round((j.progress || 0) * 100)}%`);
         }
       }
       if (j.status === "failed") throw new Error(j.error || "Import failed");
       if (j.status === "cancelled") throw new Error("Import was cancelled");
       // Fetch the actual video metadata result
       const result = await api.importJobResult(j.id);
-      loaded(result);
+      await loaded(result);
       setUrl("");
     } catch (e: any) {
-      setErr(e.message);
+      setErr(e.message || "Failed to import video from URL");
     } finally {
       setBusy("");
       setPct(0);

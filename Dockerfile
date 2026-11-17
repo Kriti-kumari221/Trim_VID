@@ -2,10 +2,12 @@
 # Stage 1: Build Frontend SPA
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
+ARG VITE_API_BASE_URL=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+RUN rm -f .env.production && npm run build
 
 # Stage 2: Production Python Backend with FFmpeg
 FROM python:3.11-slim
