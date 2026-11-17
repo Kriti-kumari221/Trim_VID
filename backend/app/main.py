@@ -150,18 +150,17 @@ def _get_cookie_file() -> Optional[Path]:
 def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
     opts = {
-        "format": "best[ext=mp4]/b/18/22/best",
+        "format": "18/best[ext=mp4]/b/22/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "nocheckcertificate": True,
+        "geo_bypass": True,
         "max_filesize": max_bytes,
         "progress_hooks": [hook] if hook else [],
         "extractor_args": {"youtube": {"player_client": clients}},
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        }
     }
     cookie_file = _get_cookie_file()
     if cookie_file:
@@ -188,8 +187,9 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
     client_configs = [
         ["android"],
         ["android_vr"],
-        ["mweb"],
         ["ios"],
+        ["mweb"],
+        ["tv_embedded"],
         ["web"],
     ]
 

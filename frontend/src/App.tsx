@@ -503,14 +503,22 @@ export default function App() {
               </span>
             </div>
             <p className="text-[11px] text-mute">
-              If YouTube restricts video downloads on cloud hosting providers (Render / AWS), you can paste the text of your exported Netscape <code>cookies.txt</code> below.
+              On cloud servers like Render or AWS, YouTube sometimes blocks video downloads from datacenter IPs. You can paste your browser's Netscape <code>cookies.txt</code> below to authenticate the server.
             </p>
+            <div className="rounded bg-panel/70 p-2 text-[10.5px] text-mute space-y-1 border border-line/40">
+              <b className="text-paper">What to paste & how to get it (30 seconds):</b>
+              <ol className="list-decimal list-inside space-y-0.5 text-paper/80">
+                <li>Install Chrome extension: <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" rel="noreferrer" className="text-trim underline">Get cookies.txt LOCALLY</a></li>
+                <li>Go to <a href="https://www.youtube.com" target="_blank" rel="noreferrer" className="text-trim underline">youtube.com</a></li>
+                <li>Click the extension icon &rarr; click <b>Export</b> (or copy all text) &rarr; paste into the box below &rarr; click <b>Save Cookies</b>.</li>
+              </ol>
+            </div>
             <div className="flex gap-2">
               <textarea
                 value={cookieTxt}
                 onChange={(e) => setCookieTxt(e.target.value)}
-                placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE ... (paste cookies.txt here)"
-                rows={2}
+                placeholder="# Netscape HTTP Cookie File&#10;.youtube.com TRUE / FALSE 1750000000 SID ... (paste exported cookies here)"
+                rows={3}
                 className="flex-1 rounded border border-line bg-panel px-2.5 py-1.5 font-mono text-[10px] text-paper focus:outline-none"
               />
               <button
