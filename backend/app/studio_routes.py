@@ -293,10 +293,11 @@ def get_studio_task_result(task_id: str):
 
 @router.post("/projects/{project_id}/transcribe-youtube")
 def transcribe_youtube_route(project_id: str, req: YouTubeTranscribeReq):
-    """Instantly extracts YouTube subtitles/captions with millisecond timestamps (like Tactiq)."""
+    """Instantly extracts YouTube subtitles/captions with timestamps (like Tactiq)."""
     res = transcription_service.extract_youtube_transcript_fast(req.url, project_id=project_id)
     if not res:
-        raise HTTPException(400, "Could not extract timed captions from this YouTube URL. Use Speech-to-Text Whisper instead.")
+        reason = getattr(transcription_service, "LAST_TRANSCRIPT_ERROR", "") or "unknown reason"
+        raise HTTPException(400, f"Could not extract captions: {reason}")
     return res
 
 
@@ -496,3 +497,90 @@ def save_cookies_route(req: CookieReq):
     cookie_path.parent.mkdir(parents=True, exist_ok=True)
     cookie_path.write_text(req.cookies.strip(), encoding="utf-8")
     return {"saved": True, "size": len(req.cookies)}
+
+# ----------------- Auto Shorts Pipeline Endpoints -----------------
+class CreateAutoShortsReq(BaseModel):
+    youtube_url: str
+    template_id: str = "acharya_prashant_classic"
+    num_clips: int = 5
+    project_id: Optional[str] = None
+
+class RenderApprovedReq(BaseModel):
+    clips: List[Dict[str, Any]]
+    font_file: Optional[str] = None
+
+class ProceedAISelectionReq(BaseModel):
+    custom_transcript: Optional[List[Dict[str, Any]]] = None
+
+@router.get("/fonts")
+def list_fonts_route():
+    from . import config
+    fonts_dir = config.DATA_DIR / "fonts"
+    if not fonts_dir.is_dir():
+        return []
+    fonts = []
+    for f in fonts_dir.glob("*.ttf"):
+        fonts.append({"name": f.stem, "filename": f.name})
+    return fonts
+
+@router.get("/templates")
+def list_templates_route():
+    from . import template_service
+    return template_service.list_templates()
+
+@router.get("/templates/{template_id}")
+def get_template_route(template_id: str):
+    from . import template_service
+    t = template_service.load_template(template_id)
+    if not t:
+        raise HTTPException(404, "Template not found")
+    return t
+
+@router.post("/auto-shorts/create")
+def create_auto_shorts_route(req: CreateAutoShortsReq):
+    from . import auto_shorts_service
+    try:
+        job = auto_shorts_service.create_auto_shorts_job(
+            youtube_url=req.youtube_url,
+            template_id=req.template_id,
+            num_clips=req.num_clips,
+            project_id=req.project_id
+        )
+        return job
+    except Exception as e:
+        raise HTTPException(500, f"Failed to start auto shorts pipeline: {e}")
+
+@router.get("/auto-shorts/jobs/{job_id}")
+def get_auto_shorts_job_route(job_id: str):
+    from . import auto_shorts_service
+    job = auto_shorts_service.get_auto_shorts_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+@router.post("/auto-shorts/jobs/{job_id}/proceed-ai")
+def proceed_ai_route(job_id: str, req: ProceedAISelectionReq):
+    from . import auto_shorts_service
+    try:
+        threading.Thread(
+            target=auto_shorts_service.proceed_to_ai_selection,
+            args=(job_id, req.custom_transcript),
+            daemon=True
+        ).start()
+        return {"status": "ai_selection_started", "job_id": job_id}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to proceed to AI selection: {e}")
+
+@router.post("/auto-shorts/jobs/{job_id}/render")
+def render_auto_shorts_route(job_id: str, req: RenderApprovedReq):
+    from . import auto_shorts_service
+    try:
+        threading.Thread(
+            target=auto_shorts_service.render_approved_auto_shorts,
+            args=(job_id, req.clips, req.font_file),
+            daemon=True
+        ).start()
+        return {"status": "rendering_started", "job_id": job_id}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to render approved clips: {e}")
+

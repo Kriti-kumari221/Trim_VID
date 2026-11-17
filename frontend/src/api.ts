@@ -254,5 +254,32 @@ export const api = {
   settings: {
     getCookieStatus: () => fetch(apiUrl("/api/settings/cookies")).then(j<{ configured: boolean }>),
     saveCookies: (cookies: string) => post("/api/settings/cookies", { cookies }).then(j<{ saved: boolean; size: number }>),
+  },
+
+  // Auto Shorts Pipeline & Templates
+  autoShorts: {
+    listTemplates: () => fetch(apiUrl("/api/templates")).then(j<Array<{ id: string; name: string; canvas: any }>>),
+    getTemplate: (templateId: string) => fetch(apiUrl(`/api/templates/${templateId}`)).then(j<any>),
+    listFonts: () => fetch(apiUrl("/api/fonts")).then(j<Array<{ name: string; filename: string }>>),
+    createJob: (youtubeUrl: string, templateId = "acharya_prashant_classic", numClips = 5, projectId?: string) =>
+      post("/api/auto-shorts/create", { youtube_url: youtubeUrl, template_id: templateId, num_clips: numClips, project_id: projectId })
+        .then(j<{ id: string; status: string; stage: string; progress: number }>),
+    getJob: (jobId: string) => fetch(apiUrl(`/api/auto-shorts/jobs/${jobId}`)).then(j<{
+      id: string; project_id: string; youtube_url: string; template_id: string;
+      status: string; stage: string; progress: number; num_clips: number;
+      step_detail?: string;
+      transcript?: Array<{ start: number; duration: number; text: string }>;
+      script_content?: string;
+      clips: Array<{
+        id: string; start: number; end: number; hook_title: string; virality_score: number;
+        reason: string; summary: string; script_content?: string; accepted?: boolean; crop_rect?: any; custom_subtitles?: any[];
+      }>;
+      renders: Array<{
+        clip_id: string; export_id: string; title: string; file_path: string; download_url: string;
+      }>;
+      error?: string;
+    }>),
+    proceedToAI: (jobId: string, customTranscript?: any[]) => post(`/api/auto-shorts/jobs/${jobId}/proceed-ai`, { custom_transcript: customTranscript }).then(j<any>),
+    renderApproved: (jobId: string, clips: any[], fontFile?: string) => post(`/api/auto-shorts/jobs/${jobId}/render`, { clips, font_file: fontFile }).then(j<any>),
   }
 };

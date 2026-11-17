@@ -13,6 +13,7 @@ import { AIScriptStudioView } from "./components/AIScriptStudioView";
 import { MultiClipList } from "./components/MultiClipList";
 import { MusicStudioView } from "./components/MusicStudioView";
 import { ExportCenterView } from "./components/ExportCenterView";
+import { AutoShortsView } from "./components/AutoShortsView";
 
 const fmt = (t: number) => {
   const ms = Math.round(Math.max(0, t) * 1000), p = (n: number, w = 2) => String(n).padStart(w, "0");
@@ -78,7 +79,7 @@ export default function App() {
   const [showGDriveModal, setShowGDriveModal] = useState(false);
 
   // Active studio tab
-  type StudioTab = "editor" | "transcript" | "scripts" | "music" | "exports";
+  type StudioTab = "editor" | "auto_shorts" | "transcript" | "scripts" | "music" | "exports";
   const [activeTab, setActiveTab] = useState<StudioTab>("editor");
 
   // Video and timeline states
@@ -412,6 +413,15 @@ export default function App() {
             Editor
           </button>
           <button
+            onClick={() => setActiveTab("auto_shorts")}
+            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-bold transition-all ${
+              activeTab === "auto_shorts" ? "bg-amber-400 text-ink shadow-sm" : "text-amber-400/80 hover:text-amber-300"
+            }`}
+          >
+            <Sparkles size={14} className="text-amber-500" />
+            Auto Shorts
+          </button>
+          <button
             onClick={() => setActiveTab("transcript")}
             className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-bold transition-all ${
               activeTab === "transcript" ? "bg-trim text-ink shadow-sm" : "text-mute hover:text-paper"
@@ -558,6 +568,17 @@ export default function App() {
 
       {/* Main Studio Viewport */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
+        {activeTab === "auto_shorts" && project && (
+          <div className="flex-1 min-w-0">
+            <AutoShortsView
+              projectId={project.id}
+              defaultUrl={url}
+              onSeek={seek}
+              onClipsGenerated={() => loadFullProject(project.id)}
+            />
+          </div>
+        )}
+
         {activeTab === "transcript" && project && (
           <div className="flex-1 min-w-0">
             <TranscriptStudioView

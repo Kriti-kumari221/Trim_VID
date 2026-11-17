@@ -117,6 +117,25 @@ def init_db():
         key TEXT PRIMARY KEY,
         value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS auto_shorts_jobs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT,
+        youtube_url TEXT NOT NULL,
+        template_id TEXT DEFAULT 'acharya_prashant_classic',
+        status TEXT DEFAULT 'pending',
+        stage TEXT DEFAULT 'ingest',
+        progress REAL DEFAULT 0.0,
+        num_clips INTEGER DEFAULT 5,
+        clips_json TEXT DEFAULT '[]',
+        renders_json TEXT DEFAULT '[]',
+        step_detail TEXT DEFAULT '',
+        transcript_json TEXT DEFAULT '[]',
+        script_content TEXT DEFAULT '',
+        error TEXT,
+        created_at REAL,
+        updated_at REAL
+    );
     """)
     conn.commit()
     conn.close()
