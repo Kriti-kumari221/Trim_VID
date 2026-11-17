@@ -150,7 +150,7 @@ def _get_cookie_file() -> Optional[Path]:
 def _yt_opts_for_client(clients: list[str], out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
     opts = {
-        "format": "18/best[ext=mp4]/b/22/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/22/b/best",
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
