@@ -147,7 +147,7 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def _yt_opts_for_client(clients: list[str], fmt: str, out_tmpl: str, hook, max_bytes: int) -> dict:
+def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients."""
     opts = {
         "format": fmt,
@@ -160,8 +160,9 @@ def _yt_opts_for_client(clients: list[str], fmt: str, out_tmpl: str, hook, max_b
         "geo_bypass": True,
         "max_filesize": max_bytes,
         "progress_hooks": [hook] if hook else [],
-        "extractor_args": {"youtube": {"player_client": clients}},
     }
+    if clients:
+        opts["extractor_args"] = {"youtube": {"player_client": clients}}
     cookie_file = _get_cookie_file()
     if cookie_file:
         opts["cookiefile"] = str(cookie_file)
@@ -183,9 +184,10 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # (client, format) pairs — android/ios SABR streams only expose format 18 (360p progressive)
-    # web/mweb expose more adaptive formats that can be merged
+    # Try yt-dlp native extraction first (defaults: visionos, android, web etc)
+    # Then fallback to explicit client targets if needed
     client_configs = [
+        (None,             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/22/best"),
         (["android"],      "18/22/17/36/best"),
         (["android_vr"],   "18/22/17/36/best"),
         (["ios"],          "18/22/best[ext=mp4]/best"),
