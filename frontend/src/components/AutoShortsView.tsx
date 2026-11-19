@@ -2,18 +2,25 @@ import React, { useState, useEffect } from "react";
 import {
   Sparkles, Play, Pause, Check, X, RefreshCw, Download, Video,
   Layers, Sliders, ChevronRight, AlertCircle, CheckCircle2, Clock,
-  FileText, Edit3, Type, ArrowRight, Eye, Plus
+  FileText, Edit3, Type, ArrowRight, Eye, Plus, RotateCcw
 } from "lucide-react";
 import { api, apiUrl } from "../api";
+
+const fmtTime = (s: number) => {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+};
 
 interface AutoShortsViewProps {
   projectId: string;
   defaultUrl?: string;
   onClipsGenerated?: () => void;
   onSeek?: (t: number) => void;
+  onSelectCut?: (start: number, end: number) => void;
 }
 
-export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, onSeek }: AutoShortsViewProps) {
+export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, onSeek, onSelectCut }: AutoShortsViewProps) {
   const [url, setUrl] = useState(defaultUrl || "https://www.youtube.com/watch?v=NkMC9IXCRRs");
   const [templateId, setTemplateId] = useState("acharya_prashant_classic");
   const [selectedFont, setSelectedFont] = useState("Khand-Bold.ttf");
@@ -790,9 +797,12 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                     </button>
                     {onSeek && (
                       <button
-                        onClick={() => onSeek(clip.start)}
+                        onClick={() => {
+                          onSeek(clip.start);
+                          if (onSelectCut) onSelectCut(clip.start, clip.end);
+                        }}
                         className="p-1.5 rounded-md border border-line hover:border-amber-400 text-mute hover:text-amber-300"
-                        title="Seek in player"
+                        title="Seek & snap cut in Timeline"
                       >
                         <Play size={14} />
                       </button>

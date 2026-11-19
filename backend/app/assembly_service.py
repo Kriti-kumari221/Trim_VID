@@ -17,7 +17,8 @@ def assemble_short_video(
     clip_ids: List[str],
     music_track_id: Optional[str] = None,
     music_volume: float = 0.2,
-    subtitle_preset: Optional[str] = "viral_yellow",
+    subtitle_preset: Optional[str] = "pop_ap_yellow",
+    subtitle_config: Optional[Dict[str, Any]] = None,
     aspect_ratio: str = "9:16",
     resolution: str = "1080p",
     enhancements: Optional[Dict[str, Any]] = None,
@@ -158,8 +159,15 @@ def assemble_short_video(
 
         # Step 3: Subtitles and Background Music Mixing
         ass_path = None
-        if subtitle_segments and subtitle_preset:
-            ass_path = subtitles_service.generate_ass_subtitles(subtitle_segments, subtitle_preset, temp_dir / "subs.ass")
+        if subtitle_segments and (subtitle_config or subtitle_preset):
+            sub_target = subtitle_config if subtitle_config else subtitle_preset
+            ass_path = subtitles_service.generate_ass_subtitles(
+                subtitle_segments,
+                sub_target,
+                temp_dir / "subs.ass",
+                canvas_w=1080 if aspect_ratio == "9:16" else (1920 if aspect_ratio == "16:9" else 1080),
+                canvas_h=1920 if aspect_ratio == "9:16" else (1080 if aspect_ratio == "16:9" else 1080)
+            )
 
         final_cmd = ["ffmpeg", "-y", "-hide_banner", "-i", str(concatenated_video)]
         

@@ -1,16 +1,17 @@
 import React, { useState, useRef } from "react";
-import { Mic, Search, Download, Edit2, Check, Play, Loader2, FileText, AlertCircle, Zap, Upload, FolderUp } from "lucide-react";
+import { Mic, Search, Download, Edit2, Check, Play, Loader2, FileText, AlertCircle, Zap, Upload, FolderUp, Scissors, Sparkles } from "lucide-react";
 import { api, TranscriptData, TranscriptSegment } from "../api";
 
 interface Props {
   projectId: string;
   transcript: TranscriptData | null;
   onSeek: (seconds: number) => void;
+  onSelectCut?: (start: number, end: number) => void;
   onTranscriptUpdated: (t: TranscriptData) => void;
   defaultUrl?: string;
 }
 
-export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscriptUpdated, defaultUrl = "" }: Props) {
+export function TranscriptStudioView({ projectId, transcript, onSeek, onSelectCut, onTranscriptUpdated, defaultUrl = "" }: Props) {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("Running faster-whisper AI transcription...");
   const [error, setError] = useState("");
@@ -20,6 +21,8 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [ytUrlInput, setYtUrlInput] = useState(defaultUrl);
+  const [matchingText, setMatchingText] = useState(false);
+  const [matchResult, setMatchResult] = useState<{ start: number; end: number; duration: number; matched_text: string; confidence: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,6 +90,24 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMatchTextToCut = async (txt: string) => {
+    if (!txt || txt.length < 3) return;
+    setMatchingText(true);
+    setError("");
+    try {
+      const res = await api.transcription.matchText(projectId, txt);
+      setMatchResult(res);
+      onSeek(res.start);
+      if (onSelectCut) {
+        onSelectCut(res.start, res.end);
+      }
+    } catch (e: any) {
+      setError(e.message || "Could not match text in transcript.");
+    } finally {
+      setMatchingText(false);
     }
   };
 
@@ -231,17 +252,65 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
 
       {/* Search Input */}
       {transcript && (
-        <div className="border-b border-line/60 bg-ink/30 px-5 py-2">
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-2.5 text-mute" />
-            <input
-              type="text"
-              placeholder="Search words, phrases, or speakers..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded border border-line bg-panel py-1.5 pl-8 pr-3 text-xs text-paper focus:border-trim focus:outline-none"
-            />
+        <div className="border-b border-line/60 bg-ink/30 px-5 py-2.5 space-y-2">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-3 top-2.5 text-mute" />
+              <input
+                type="text"
+                placeholder="Search words, dialogue, or paste spoken script to auto-snap timeline..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && search.trim().length > 3) {
+                    handleMatchTextToCut(search.trim());
+                  }
+                }}
+                className="w-full rounded border border-line bg-panel py-1.5 pl-8 pr-3 text-xs text-paper focus:border-trim focus:outline-none"
+              />
+            </div>
+
+            {search.trim().length > 3 && (
+              <button
+                onClick={() => handleMatchTextToCut(search.trim())}
+                disabled={matchingText}
+                className="inline-flex items-center gap-1.5 rounded bg-amber-400 px-3 py-1.5 text-xs font-bold text-ink hover:bg-amber-300 disabled:opacity-40 transition-colors shrink-0 shadow-sm"
+                title="Detect exact start/end timestamps from spoken words and cut video"
+              >
+                {matchingText ? <Loader2 size={13} className="animate-spin" /> : <Scissors size={13} />}
+                Match Text to Cut
+              </button>
+            )}
           </div>
+
+          {matchResult && (
+            <div className="flex items-center justify-between rounded-lg border border-amber-500/40 bg-amber-950/30 p-2.5 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles size={14} className="text-amber-400 shrink-0" />
+                <span className="text-amber-200">
+                  Detected Timeline: <strong className="font-mono text-amber-300">{fmtTime(matchResult.start)} &rarr; {fmtTime(matchResult.end)}</strong> ({matchResult.duration}s) &bull; {matchResult.confidence}% match
+                </span>
+                <span className="text-[11px] text-mute truncate italic max-w-xs">"{matchResult.matched_text}"</span>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                <button
+                  onClick={() => {
+                    onSeek(matchResult.start);
+                    if (onSelectCut) onSelectCut(matchResult.start, matchResult.end);
+                  }}
+                  className="rounded bg-amber-400 px-2.5 py-1 text-[11px] font-bold text-ink hover:bg-amber-300"
+                >
+                  Snap Cut Timeline
+                </button>
+                <button
+                  onClick={() => setMatchResult(null)}
+                  className="text-mute hover:text-paper px-1"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -388,14 +457,29 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
                     )}
                   </div>
 
-                  {/* Edit button */}
+                  {/* Cut & Edit buttons */}
                   {!isEditing && (
-                    <button
-                      onClick={() => startEdit(s)}
-                      className="opacity-0 group-hover:opacity-100 rounded p-1 text-mute hover:text-paper transition-opacity"
-                    >
-                      <Edit2 size={12} />
-                    </button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {onSelectCut && (
+                        <button
+                          onClick={() => {
+                            onSeek(s.start);
+                            onSelectCut(s.start, s.end);
+                          }}
+                          className="rounded p-1 text-amber-400 hover:bg-amber-400/20"
+                          title="Snap Timeline Cut to this sentence"
+                        >
+                          <Scissors size={12} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => startEdit(s)}
+                        className="rounded p-1 text-mute hover:text-paper"
+                        title="Edit text"
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                    </div>
                   )}
                 </div>
               );

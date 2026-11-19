@@ -78,6 +78,9 @@ class UpdateTranscriptReq(BaseModel):
 class ParseScriptReq(BaseModel):
     script_text: str
 
+class MatchTextToTimelineReq(BaseModel):
+    text: str
+
 class ParseTranscriptReq(BaseModel):
     raw_text: str
 
@@ -113,7 +116,8 @@ class AssembleReq(BaseModel):
     clip_ids: List[str]
     music_track_id: Optional[str] = None
     music_volume: float = 0.2
-    subtitle_preset: Optional[str] = "viral_yellow"
+    subtitle_preset: Optional[str] = "pop_ap_yellow"
+    subtitle_config: Optional[Dict[str, Any]] = None
     aspect_ratio: str = "9:16"
     resolution: str = "1080p"
     enhancements: Optional[Dict[str, Any]] = None
@@ -419,6 +423,19 @@ def export_transcript_route(project_id: str, format: str = "srt", start: Optiona
     except Exception as e:
         raise HTTPException(400, str(e))
 
+@router.post("/projects/{project_id}/transcript/match-text")
+def match_transcript_text_route(project_id: str, req: MatchTextToTimelineReq):
+    """
+    Given a spoken text excerpt, sentence, or script dialogue:
+    Finds the exact start and end timestamps in the video,
+    returning the cut boundaries and confidence score.
+    """
+    try:
+        res = transcription_service.match_text_to_timeline(project_id, req.text)
+        return res
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
 # ----------------- Content Analysis & AI Scripts -----------------
 @router.post("/projects/{project_id}/analyze")
 def analyze_project_content_route(project_id: str):
@@ -562,6 +579,7 @@ def assemble_route(project_id: str, req: AssembleReq):
             music_track_id=req.music_track_id,
             music_volume=req.music_volume,
             subtitle_preset=req.subtitle_preset,
+            subtitle_config=req.subtitle_config,
             aspect_ratio=req.aspect_ratio,
             resolution=req.resolution,
             enhancements=req.enhancements,
@@ -617,6 +635,9 @@ def save_cookies_route(req: CookieReq):
 
 class ParseScriptReq(BaseModel):
     script_text: str
+
+class MatchTextToTimelineReq(BaseModel):
+    text: str
 
 class ParseTranscriptReq(BaseModel):
     raw_text: str

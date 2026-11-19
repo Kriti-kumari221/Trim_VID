@@ -11,7 +11,10 @@ export type Job = {
 export type Loaded = { video_id: string; metadata: Meta };
 
 export type Opts = {
-  start: number; end: number; mode: string; codec: string; resolution: string; quality: string
+  start: number; end: number; mode: string; codec: string; resolution: string; quality: string;
+  burn_subtitles?: boolean; subtitle_config?: SubtitleStyle | null;
+  individual_subtitle_styles?: Record<string, SubtitleStyle> | null;
+  project_id?: string;
 };
 
 export type ProjectFolder = {
@@ -66,10 +69,54 @@ export type MusicTrack = {
   url: string; is_preset: boolean; analysis_reason?: string; detected_mood?: string;
 };
 
-export type SubtitlePreset = {
-  id: string; name: string; font_name: string; font_size: number; primary_color: string;
-  outline_color: string; outline_width: number; alignment: number; margin_v: number;
-  bold: boolean; uppercase: boolean
+export type SubtitleStyle = {
+  id?: string;
+  name?: string;
+  category?: string;
+  font_family: string;
+  font_size: number;
+  font_weight?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  casing?: "uppercase" | "lowercase" | "normal";
+  letter_spacing?: number;
+  line_height?: number;
+  alignment?: number; // 2=bottom, 5=center, 8=top
+  text_align?: "left" | "center" | "right";
+  primary_color: string;
+  highlight_color?: string;
+  text_opacity?: number;
+  outline_color?: string;
+  outline_width?: number;
+  shadow_color?: string;
+  shadow_depth?: number;
+  shadow_blur?: number;
+  shadow_opacity?: number;
+  bg_color?: string;
+  bg_opacity?: number;
+  bg_padding?: number;
+  bg_radius?: number;
+  border_style?: number; // 1=outline+shadow, 3=opaque box
+  margin_v?: number;
+  pos_x?: number; // percentage 0 - 100
+  pos_y?: number; // percentage 0 - 100
+  width?: number; // max-width % or px
+  rotation?: number; // deg
+  is_locked?: boolean;
+  animation?: string;
+  animation_duration?: number;
+  animation_speed?: number;
+  highlight_words?: string[];
+  description?: string;
+};
+
+export type SubtitlePreset = SubtitleStyle & {
+  id: string;
+  name: string;
+  category: string;
+  font_name?: string;
+  uppercase?: boolean;
 };
 
 export type ExportItem = {
@@ -214,6 +261,10 @@ export const api = {
       }
       return apiUrl(u);
     },
+    matchText: (projectId: string, text: string) =>
+      post(`/api/projects/${projectId}/transcript/match-text`, { text }).then(
+        j<{ start: number; end: number; duration: number; matched_text: string; confidence: number; token_count: number }>
+      ),
   },
 
   // Content Analysis & AI Scripts
@@ -258,6 +309,7 @@ export const api = {
       music_track_id?: string | null;
       music_volume?: number;
       subtitle_preset?: string | null;
+      subtitle_config?: SubtitleStyle | null;
       aspect_ratio?: string;
       resolution?: string;
       enhancements?: Record<string, any>;

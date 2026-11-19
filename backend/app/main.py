@@ -1,7 +1,7 @@
 import ipaddress, json, os, re, shutil, socket, threading, time, urllib.request, uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -39,6 +39,10 @@ class TrimReq(BaseModel):
     codec: Literal["h264", "h265"] = "h264"
     resolution: Literal["original", "720p", "1080p", "1440p", "4k"] = "original"
     quality: Literal["high", "balanced", "small"] = "high"
+    burn_subtitles: bool = False
+    subtitle_config: Optional[dict] = None
+    individual_subtitle_styles: Optional[Dict[str, Any]] = None
+    project_id: Optional[str] = None
 
 
 class UrlReq(BaseModel):
@@ -397,9 +401,42 @@ def _run_job(j):
         return
     j["status"] = "running"
     r, meta = j["req"], j["meta"]
+    ass_file = None
     try:
-        for hw in ([True, False] if config.USE_HW and r.mode == "precise" else [False]):
-            cmd = fx.build_cmd(j["src"], j["out"], r.start, r.end, r.mode, r.codec, r.resolution, r.quality, meta, hw)
+        # Check if subtitle burning is requested
+        if getattr(r, "burn_subtitles", False) and getattr(r, "project_id", None):
+            from . import db, subtitles_service
+            conn = db.get_connection()
+            c = conn.cursor()
+            t_row = c.execute("SELECT segments_json FROM transcripts WHERE project_id = ?", (r.project_id,)).fetchone()
+            conn.close()
+            if t_row and t_row["segments_json"]:
+                all_segs = json.loads(t_row["segments_json"])
+                ind_styles = getattr(r, "individual_subtitle_styles", None) or {}
+                clip_segs = []
+                for s in all_segs:
+                    if s["end"] > r.start and s["start"] < r.end:
+                        # Check individual styles by key or segment ID
+                        cue_key = f"{s.get('start')}_{s.get('end')}"
+                        seg_override = s.get("style_override") or ind_styles.get(cue_key) or ind_styles.get(s.get("id"))
+                        clip_segs.append({
+                            "start": max(0.0, s["start"] - r.start),
+                            "end": min(r.end - r.start, s["end"] - r.start),
+                            "text": s["text"],
+                            "style_override": seg_override
+                        })
+                if clip_segs:
+                    sub_cfg = getattr(r, "subtitle_config", None) or "pop_ap_yellow"
+                    ass_file = subtitles_service.generate_ass_subtitles(
+                        clip_segs,
+                        sub_cfg,
+                        config.DATA_DIR / f"trim_subs_{j['id']}.ass",
+                        canvas_w=meta.get("width", 1920),
+                        canvas_h=meta.get("height", 1080)
+                    )
+
+        for hw in ([True, False] if config.USE_HW and r.mode == "precise" and not ass_file else [False]):
+            cmd = fx.build_cmd(j["src"], j["out"], r.start, r.end, r.mode, r.codec, r.resolution, r.quality, meta, hw, ass_file=ass_file)
             try:
                 fx.run(cmd, r.end - r.start, lambda p: j.__setitem__("progress", p), j)
                 break
@@ -413,6 +450,9 @@ def _run_job(j):
     except Exception as e:
         j.update(status="failed", error=str(e))
         _safe_unlink(j["out"])
+    finally:
+        if ass_file:
+            _safe_unlink(ass_file)
 
 
 @app.post("/api/video/{video_id}/trim")

@@ -66,25 +66,34 @@ def hw_encoders() -> list[str]:
     return [e for e in ("h264_nvenc", "hevc_nvenc") if e in out]
 
 
-def build_cmd(src, dst, start, end, mode, codec, resolution, quality, meta, hw=False) -> list[str]:
+def build_cmd(src, dst, start, end, mode, codec, resolution, quality, meta, hw=False, ass_file=None) -> list[str]:
     c = ["ffmpeg", "-y", "-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1",
-         "-ss", f"{start:.3f}", "-i", str(src), "-t", f"{end - start:.3f}",
-         "-map", "0:v:0", "-map", "0:a:0?"]
-    if mode == "fast":   # stream copy: starts at the keyframe at/before `start`
-        c += ["-c", "copy", "-avoid_negative_ts", "make_zero"]
+         "-ss", f"{start:.3f}", "-i", str(src), "-t", f"{end - start:.3f}"]
+    if mode == "fast" and not ass_file:   # stream copy: starts at the keyframe at/before `start`
+        c += ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-avoid_negative_ts", "make_zero"]
     else:                # re-encode: frame-accurate; -ss before -i is accurate when transcoding
         crf = str(QUALITY[quality])
         enc = {"h264": "h264_nvenc", "h265": "hevc_nvenc"}[codec]
-        if hw and enc in hw_encoders():
+        
+        vf_filters = []
+        target = RES.get(resolution)
+        if target and target < min(meta["width"], meta["height"]):   # never upscale
+            vf_filters.append(f"scale={target}:-2" if meta["width"] < meta["height"] else f"scale=-2:{target}")
+        if ass_file and Path(ass_file).is_file():
+            escaped_ass = str(Path(ass_file).resolve()).replace("\\", "/").replace(":", "\\:")
+            vf_filters.append(f"subtitles='{escaped_ass}'")
+            
+        if vf_filters:
+            c += ["-vf", ",".join(vf_filters)]
+            
+        c += ["-map", "0:v:0", "-map", "0:a:0?"]
+        if hw and enc in hw_encoders() and not ass_file:
             c += ["-c:v", enc, "-rc", "vbr", "-cq", crf, "-b:v", "0"]
         else:
             c += ["-c:v", "libx265" if codec == "h265" else "libx264", "-crf", crf, "-preset", "medium"]
         if codec == "h265":
             c += ["-tag:v", "hvc1"]
         c += ["-pix_fmt", "yuv420p"]
-        target = RES.get(resolution)
-        if target and target < min(meta["width"], meta["height"]):   # never upscale
-            c += ["-vf", f"scale={target}:-2" if meta["width"] < meta["height"] else f"scale=-2:{target}"]
         c += ["-c:a", "aac", "-b:a", "192k"]
     return c + ["-movflags", "+faststart", str(dst)]
 

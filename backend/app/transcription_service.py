@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.request
@@ -428,3 +429,113 @@ def export_transcript_file(project_id: str, fmt: str, start_time: Optional[float
         return f"{p_name}_transcript.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data
     else:
         raise ValueError(f"Unsupported format: {fmt}")
+
+
+def match_text_to_timeline(
+    project_id: str,
+    query_text: str,
+    segments: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """
+    Given a user-provided sentence, quote, or custom script paragraph:
+    Locates the exact start and end timestamps in the video transcript
+    using fuzzy string matching and speech token alignment.
+    Returns matched range, matched text snippet, confidence score, and candidate cues.
+    """
+    import difflib
+
+    query_clean = query_text.strip().lower()
+    if not query_clean:
+        raise ValueError("Query text cannot be empty.")
+
+    if segments is None:
+        conn = db.get_connection()
+        c = conn.cursor()
+        row = c.execute("SELECT segments_json FROM transcripts WHERE project_id = ?", (project_id,)).fetchone()
+        conn.close()
+        if not row or not row["segments_json"]:
+            raise ValueError("No transcript found for project. Please fetch or generate transcript first.")
+        segments = json.loads(row["segments_json"])
+
+    if not segments:
+        raise ValueError("Transcript segments list is empty.")
+
+    # Flatten transcript into token stream with time coordinates
+    tokens = []
+    for s_idx, seg in enumerate(segments):
+        s_start = float(seg.get("start", 0.0))
+        s_end = float(seg.get("end", s_start + 2.0))
+        text = seg.get("text", "")
+        words = text.split()
+        if not words:
+            continue
+        step = (s_end - s_start) / max(len(words), 1)
+        for w_idx, w in enumerate(words):
+            clean_w = re.sub(r"[^\w\s]", "", w).lower()
+            if not clean_w:
+                continue
+            w_start = round(s_start + w_idx * step, 2)
+            w_end = round(w_start + step, 2)
+            tokens.append({
+                "word": clean_w,
+                "orig": w,
+                "start": w_start,
+                "end": w_end,
+                "seg_idx": s_idx
+            })
+
+    if not tokens:
+        raise ValueError("No recognizable spoken words found in transcript.")
+
+    query_words = [re.sub(r"[^\w\s]", "", w).lower() for w in query_clean.split()]
+    query_words = [w for w in query_words if w]
+    if not query_words:
+        raise ValueError("No valid query words provided.")
+
+    q_len = len(query_words)
+    best_match = None
+    best_score = 0.0
+
+    # Sliding window search with fuzzy word matching
+    min_window = max(1, int(q_len * 0.75))
+    max_window = min(len(tokens), int(q_len * 1.35) + 3)
+
+    for win_size in range(min_window, min(max_window + 1, len(tokens) + 1)):
+        for i in range(len(tokens) - win_size + 1):
+            window_slice = tokens[i : i + win_size]
+            candidate_words = [t["word"] for t in window_slice]
+            
+            # Sequence matcher ratio
+            q_str = " ".join(query_words)
+            c_str = " ".join(candidate_words)
+            matcher = difflib.SequenceMatcher(None, q_str, c_str)
+            score = matcher.ratio()
+
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "start": window_slice[0]["start"],
+                    "end": window_slice[-1]["end"],
+                    "duration": round(window_slice[-1]["end"] - window_slice[0]["start"], 2),
+                    "matched_text": " ".join([t["orig"] for t in window_slice]),
+                    "confidence": round(score * 100, 1),
+                    "token_count": len(window_slice),
+                }
+
+    if not best_match or best_score < 0.35:
+        # Fallback: substring matching across segment texts
+        for s in segments:
+            s_text = s.get("text", "").lower()
+            if any(qw in s_text for qw in query_words[:3]):
+                return {
+                    "start": float(s.get("start", 0.0)),
+                    "end": float(s.get("end", s.get("start", 0.0) + 10.0)),
+                    "duration": round(float(s.get("end", 0.0)) - float(s.get("start", 0.0)), 2),
+                    "matched_text": s.get("text", ""),
+                    "confidence": 55.0,
+                    "token_count": len(s.get("text", "").split())
+                }
+        raise ValueError(f"Could not find matching spoken dialogue for '{query_text[:50]}...'. Ensure video has transcript generated.")
+
+    return best_match
+

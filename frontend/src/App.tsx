@@ -14,6 +14,8 @@ import { MultiClipList } from "./components/MultiClipList";
 import { MusicStudioView } from "./components/MusicStudioView";
 import { ExportCenterView } from "./components/ExportCenterView";
 import { AutoShortsView } from "./components/AutoShortsView";
+import { SubtitleCustomizerPanel } from "./components/SubtitleCustomizerPanel";
+import { SubtitleStyle, SubtitlePreset } from "./api";
 
 const fmt = (t: number) => {
   const ms = Math.round(Math.max(0, t) * 1000), p = (n: number, w = 2) => String(n).padStart(w, "0");
@@ -126,6 +128,51 @@ export default function App() {
   const [subSize, setSubSize] = useState<"sm" | "md" | "lg" | "xl">("lg");
   const [playerAspectRatio, setPlayerAspectRatio] = useState<"auto" | "9:16" | "16:9" | "1:1" | "fit">("auto");
   const [previewChunks, setPreviewChunks] = useState<Array<{ start: number; end: number; speaker: string; text: string }>>([]);
+
+  // VEED-Inspired Professional Subtitle Customizer State
+  const [subtitlePresets, setSubtitlePresets] = useState<SubtitlePreset[]>([]);
+  const [currentSubtitleStyle, setCurrentSubtitleStyle] = useState<SubtitleStyle>({
+    id: "pop_ap_yellow",
+    name: "Khand Viral Yellow",
+    category: "Popular",
+    font_family: "Khand",
+    font_size: 28,
+    font_weight: "bold",
+    primary_color: "#F8F0AE",
+    outline_color: "#000000",
+    outline_width: 4,
+    shadow_color: "#000000",
+    shadow_depth: 2,
+    shadow_blur: 4,
+    bg_color: "transparent",
+    border_style: 1,
+    alignment: 2,
+    margin_v: 70,
+    pos_x: 50,
+    pos_y: 85,
+    rotation: 0,
+    casing: "uppercase",
+    animation: "popup",
+    highlight_color: "#FFFF00",
+  });
+  const [individualSubtitleStyles, setIndividualSubtitleStyles] = useState<Record<string, SubtitleStyle>>({});
+  const [selectedSubtitleCueKey, setSelectedSubtitleCueKey] = useState<string | null>(null);
+  const [isSubtitleDragging, setIsSubtitleDragging] = useState(false);
+  const [showSubtitlePanel, setShowSubtitlePanel] = useState(true);
+
+  // Load backend subtitle presets on mount
+  useEffect(() => {
+    api.subtitles.presets()
+      .then((res) => {
+        if (res && res.length > 0) setSubtitlePresets(res);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Text-to-Timeline & Auto-Cut State
+  const [timelineTextQuery, setTimelineTextQuery] = useState("");
+  const [timelineMatching, setTimelineMatching] = useState(false);
+  const [timelineMatchInfo, setTimelineMatchInfo] = useState<{ start: number; end: number; duration: number; matched_text: string; confidence: number } | null>(null);
 
   // Fetch or update preview chunks whenever project transcript updates or project changes
   useEffect(() => {
@@ -370,7 +417,15 @@ export default function App() {
     }
   };
 
-  const opts = () => ({ start, end, ...opt });
+  const opts = () => ({
+    start,
+    end,
+    ...opt,
+    burn_subtitles: showSubtitlesOverlay,
+    subtitle_config: currentSubtitleStyle,
+    individual_subtitle_styles: individualSubtitleStyles,
+    project_id: project?.id,
+  });
 
   const startDrag = (which: "s" | "e" | "h") => (ev: React.PointerEvent) => {
     ev.preventDefault();
@@ -672,6 +727,12 @@ export default function App() {
               projectId={project.id}
               defaultUrl={url}
               onSeek={seek}
+              onSelectCut={(s, e) => {
+                setStartS(s);
+                setEndS(e);
+                seek(s);
+                setActiveTab("editor");
+              }}
               onClipsGenerated={() => loadFullProject(project.id)}
             />
           </div>
@@ -684,6 +745,12 @@ export default function App() {
               transcript={project.transcript}
               defaultUrl={url}
               onSeek={seek}
+              onSelectCut={(s, e) => {
+                setStartS(s);
+                setEndS(e);
+                seek(s);
+                setActiveTab("editor");
+              }}
               onTranscriptUpdated={(t) => setProject({ ...project, transcript: t })}
             />
           </div>
@@ -700,6 +767,7 @@ export default function App() {
                 setStartS(s);
                 setEndS(e);
                 seek(s);
+                setActiveTab("editor");
               }}
               onAnalysisUpdated={(a) => setProject({ ...project, analysis: a })}
               onScriptsUpdated={(s) => setProject({ ...project, scripts: s })}
@@ -728,6 +796,7 @@ export default function App() {
               musicTracks={musicTracks}
               selectedMusicId={selectedMusicId}
               selectedSubtitlePreset={selectedSubtitlePreset}
+              subtitleConfig={currentSubtitleStyle}
             />
           </div>
         )}
@@ -925,101 +994,196 @@ export default function App() {
                             }}
                           />
 
-                          {/* Live Subtitle Overlay burned directly on screen for real-time review */}
-                          {showSubtitlesOverlay && activeChunk && (
-                            <div
-                              className={`pointer-events-none absolute inset-x-0 flex items-center justify-center px-4 ${
-                                effectiveAspect === "9:16" ? "bottom-12 sm:bottom-16" : "bottom-6 sm:bottom-10"
-                              }`}
-                            >
+                          {/* Live Interactive Subtitle Overlay with Direct Visual Selection, Dragging & Resizing */}
+                          {showSubtitlesOverlay && activeChunk && (() => {
+                            const cueKey = `${activeChunk.start}_${activeChunk.end}`;
+                            const isSelected = selectedSubtitleCueKey === cueKey;
+                            const effectiveStyle = individualSubtitleStyles[cueKey] || currentSubtitleStyle;
+
+                            const posX = effectiveStyle.pos_x ?? 50;
+                            const posY = effectiveStyle.pos_y ?? (effectiveAspect === "9:16" ? 85 : 82);
+                            const rot = effectiveStyle.rotation ?? 0;
+                            const fontSizeRem = ((effectiveStyle.font_size || 28) / 16);
+                            const animName = effectiveStyle.animation || "popup";
+
+                            return (
                               <div
-                                key={`${activeChunk.start}-${activeChunk.text}`}
-                                className={`text-center font-extrabold tracking-wide max-w-[90%] transition-all ${
-                                  subEffect === "popup"
-                                    ? "anim-popup drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "bounce"
-                                    ? "anim-bounce drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "shake"
-                                    ? "anim-shake drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "flip"
-                                    ? "anim-flip drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "spin"
-                                    ? "anim-spin drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "pulse"
-                                    ? "anim-pulse drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "stretch"
-                                    ? "anim-stretch drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "glitch"
-                                    ? "anim-glitch"
-                                    : subEffect === "wave"
-                                    ? "anim-wave drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "neon"
-                                    ? "anim-neon"
-                                    : subEffect === "gradient"
-                                    ? "anim-gradient drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
-                                    : subEffect === "3d"
-                                    ? "drop-shadow-[2px_2px_0_#d97706] drop-shadow-[4px_4px_0_#92400e] drop-shadow-[6px_6px_0_#000]"
-                                    : subEffect === "glow"
-                                    ? "drop-shadow-[0_0_18px_rgba(248,240,174,0.85)]"
-                                    : subEffect === "boxed"
-                                    ? "bg-black/85 px-4 py-1.5 rounded-lg border border-white/20 shadow-2xl"
-                                    : "anim-popup"
-                                }`}
                                 style={{
-                                  fontFamily:
-                                    subFont === "Khand"
-                                      ? "'Khand', sans-serif"
-                                      : subFont === "Impact"
-                                      ? "Impact, Charcoal, sans-serif"
-                                      : subFont === "Devanagari"
-                                      ? "'Noto Sans Devanagari', sans-serif"
-                                      : subFont === "Georgia"
-                                      ? "Georgia, serif"
-                                      : "Arial, sans-serif",
-                                  color: subColor,
-                                  fontSize:
-                                    subSize === "sm"
-                                      ? (effectiveAspect === "9:16" ? "1.05rem" : "1.25rem")
-                                      : subSize === "md"
-                                      ? (effectiveAspect === "9:16" ? "1.28rem" : "1.55rem")
-                                      : subSize === "lg"
-                                      ? (effectiveAspect === "9:16" ? "1.55rem" : "1.95rem")
-                                      : (effectiveAspect === "9:16" ? "1.85rem" : "2.40rem"),
-                                  textShadow:
-                                    subEffect === "boxed" || subEffect === "glitch" || subEffect === "neon"
-                                      ? "none"
-                                      : "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 4px 10px rgba(0,0,0,0.95)",
-                                  lineHeight: 1.15,
+                                  position: "absolute",
+                                  left: `${posX}%`,
+                                  top: `${posY}%`,
+                                  transform: `translate(-50%, -50%) rotate(${rot}deg)`,
+                                  zIndex: 40,
+                                }}
+                                onPointerDown={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedSubtitleCueKey(cueKey);
+                                  setIsSubtitleDragging(true);
+
+                                  const videoContainer = e.currentTarget.parentElement;
+                                  if (!videoContainer) return;
+                                  const containerRect = videoContainer.getBoundingClientRect();
+
+                                  const onMove = (moveEv: PointerEvent) => {
+                                    const rawX = ((moveEv.clientX - containerRect.left) / containerRect.width) * 100;
+                                    const rawY = ((moveEv.clientY - containerRect.top) / containerRect.height) * 100;
+                                    const clampedX = Math.max(5, Math.min(95, Math.round(rawX)));
+                                    const clampedY = Math.max(5, Math.min(95, Math.round(rawY)));
+
+                                    // Flexible independent positioning per cue:
+                                    // Moving this specific subtitle persists directly for this cue
+                                    setIndividualSubtitleStyles((prev) => ({
+                                      ...prev,
+                                      [cueKey]: {
+                                        ...(prev[cueKey] || currentSubtitleStyle),
+                                        pos_x: clampedX,
+                                        pos_y: clampedY,
+                                      },
+                                    }));
+                                  };
+
+                                  const onUp = () => {
+                                    setIsSubtitleDragging(false);
+                                    window.removeEventListener("pointermove", onMove);
+                                    window.removeEventListener("pointerup", onUp);
+                                  };
+
+                                  window.addEventListener("pointermove", onMove);
+                                  window.addEventListener("pointerup", onUp);
+                                }}
+                                className={`cursor-move touch-none select-none transition-shadow ${
+                                  isSelected
+                                    ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-black/60 rounded p-1 shadow-2xl"
+                                    : "hover:ring-1 hover:ring-amber-400/50"
+                                }`}
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+                                    e.preventDefault();
+                                    const step = e.shiftKey ? 3 : 1;
+                                    const curX = effectiveStyle.pos_x ?? 50;
+                                    const curY = effectiveStyle.pos_y ?? 85;
+                                    const newX = e.key === "ArrowLeft" ? curX - step : e.key === "ArrowRight" ? curX + step : curX;
+                                    const newY = e.key === "ArrowUp" ? curY - step : e.key === "ArrowDown" ? curY + step : curY;
+                                    setIndividualSubtitleStyles((prev) => ({
+                                      ...prev,
+                                      [cueKey]: {
+                                        ...(prev[cueKey] || currentSubtitleStyle),
+                                        pos_x: newX,
+                                        pos_y: newY,
+                                      },
+                                    }));
+                                  }
                                 }}
                               >
-                                {(() => {
-                                  let text = activeChunk.text;
-                                  if (subCase === "uppercase") text = text.toUpperCase();
-                                  else if (subCase === "lowercase") text = text.toLowerCase();
+                                <div
+                                  className={`text-center font-extrabold tracking-wide transition-transform ${
+                                    animName === "popup"
+                                      ? "anim-popup"
+                                      : animName === "bounce"
+                                      ? "anim-bounce"
+                                      : animName === "shake"
+                                      ? "anim-shake"
+                                      : animName === "flip"
+                                      ? "anim-flip"
+                                      : animName === "spin"
+                                      ? "anim-spin"
+                                      : animName === "pulse"
+                                      ? "anim-pulse"
+                                      : animName === "stretch"
+                                      ? "anim-stretch"
+                                      : animName === "glitch"
+                                      ? "anim-glitch"
+                                      : animName === "wave"
+                                      ? "anim-wave"
+                                      : animName === "neon"
+                                      ? "anim-neon"
+                                      : animName === "gradient"
+                                      ? "anim-gradient"
+                                      : animName === "slide_up"
+                                      ? "anim-slide_up"
+                                      : animName === "scale_in"
+                                      ? "anim-scale_in"
+                                      : animName === "spring"
+                                      ? "anim-spring"
+                                      : animName === "smooth_reveal"
+                                      ? "anim-smooth_reveal"
+                                      : "anim-popup"
+                                  }`}
+                                  style={{
+                                    fontFamily:
+                                      effectiveStyle.font_family === "Khand"
+                                        ? "'Khand', sans-serif"
+                                        : effectiveStyle.font_family === "Impact"
+                                        ? "Impact, Charcoal, sans-serif"
+                                        : effectiveStyle.font_family === "Devanagari" || effectiveStyle.font_family === "NotoSansDevanagari"
+                                        ? "'Noto Sans Devanagari', sans-serif"
+                                        : effectiveStyle.font_family === "Georgia"
+                                        ? "Georgia, serif"
+                                        : "Arial, sans-serif",
+                                    color: effectiveStyle.primary_color || "#FFFF00",
+                                    fontSize: `${fontSizeRem}rem`,
+                                    fontWeight: effectiveStyle.bold !== false ? "bold" : "normal",
+                                    fontStyle: effectiveStyle.italic ? "italic" : "normal",
+                                    textDecoration: effectiveStyle.underline ? "underline" : "none",
+                                    backgroundColor:
+                                      effectiveStyle.border_style === 3 || (effectiveStyle.bg_color && effectiveStyle.bg_color !== "transparent")
+                                        ? effectiveStyle.bg_color || "#000000"
+                                        : "transparent",
+                                    padding: effectiveStyle.border_style === 3 ? "4px 12px" : "0",
+                                    borderRadius: effectiveStyle.border_style === 3 ? "8px" : "0",
+                                    textShadow:
+                                      effectiveStyle.border_style === 3
+                                        ? "none"
+                                        : `-2px -2px 0 ${effectiveStyle.outline_color || "#000"}, 2px -2px 0 ${effectiveStyle.outline_color || "#000"}, -2px 2px 0 ${effectiveStyle.outline_color || "#000"}, 2px 2px 0 ${effectiveStyle.outline_color || "#000"}, 0 4px 12px rgba(0,0,0,0.95)`,
+                                    lineHeight: 1.15,
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {(() => {
+                                    let txt = activeChunk.text;
+                                    if (effectiveStyle.casing === "uppercase") txt = txt.toUpperCase();
+                                    else if (effectiveStyle.casing === "lowercase") txt = txt.toLowerCase();
 
-                                  if (subEffect === "pop_keyword" || subEffect === "bold_emphasis") {
-                                    const words = text.split(" ");
-                                    if (words.length > 1) {
-                                      const longestIdx = words.reduce((maxI, w, i, arr) => (w.length > arr[maxI].length ? i : maxI), 0);
-                                      return words.map((w, idx) => (
-                                        <span
-                                          key={idx}
-                                          className={`inline-block mx-1 transition-transform ${
-                                            idx === longestIdx
-                                              ? "text-yellow-300 scale-125 font-black drop-shadow-[0_0_14px_rgba(250,204,21,0.9)] underline decoration-amber-400 decoration-2"
-                                              : "opacity-90 scale-95"
-                                          }`}
-                                        >
-                                          {w}
-                                        </span>
-                                      ));
+                                    if (effectiveStyle.animation === "pop_keyword" || effectiveStyle.animation === "karaoke") {
+                                      const words = txt.split(" ");
+                                      if (words.length > 1) {
+                                        const longestIdx = words.reduce((maxI, w, i, arr) => (w.length > arr[maxI].length ? i : maxI), 0);
+                                        return words.map((w, idx) => (
+                                          <span
+                                            key={idx}
+                                            className={`inline-block mx-1 transition-transform ${
+                                              idx === longestIdx
+                                                ? "scale-125 font-black drop-shadow-[0_0_12px_rgba(255,255,0,0.85)] underline decoration-amber-400 decoration-2"
+                                                : "opacity-90"
+                                            }`}
+                                            style={{
+                                              color: idx === longestIdx ? effectiveStyle.highlight_color || "#00FF66" : effectiveStyle.primary_color,
+                                            }}
+                                          >
+                                            {w}
+                                          </span>
+                                        ));
+                                      }
                                     }
-                                  }
-                                  return text;
-                                })()}
+                                    return txt;
+                                  })()}
+                                </div>
+
+                                {isSelected && (
+                                  <>
+                                    <div className="absolute -top-1.5 -left-1.5 h-3 w-3 rounded-full bg-amber-400 border border-black shadow" />
+                                    <div className="absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full bg-amber-400 border border-black shadow" />
+                                    <div className="absolute -bottom-1.5 -left-1.5 h-3 w-3 rounded-full bg-amber-400 border border-black shadow" />
+                                    <div className="absolute -bottom-1.5 -right-1.5 h-3 w-3 rounded-full bg-amber-400 border border-black shadow" />
+                                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 rounded bg-amber-400 px-1.5 py-0.2 text-[9px] font-bold text-ink whitespace-nowrap shadow">
+                                      Drag or use arrows to position
+                                    </div>
+                                  </>
+                                )}
                               </div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -1033,7 +1197,6 @@ export default function App() {
                         <span>Subtitle Live FX:</span>
                       </span>
 
-                      {/* Toggle Subtitles On/Off */}
                       <button
                         onClick={() => setShowSubtitlesOverlay(!showSubtitlesOverlay)}
                         className={`rounded px-2.5 py-1 text-xs font-bold transition-all ${
@@ -1062,15 +1225,30 @@ export default function App() {
                           {previewChunks.length} cues synced
                         </span>
                       )}
+
+                      <button
+                        onClick={() => setShowSubtitlePanel(!showSubtitlePanel)}
+                        className={`rounded px-2.5 py-1 text-xs font-bold transition-all flex items-center gap-1.5 ${
+                          showSubtitlePanel
+                            ? "bg-amber-500/30 text-amber-200 border border-amber-400/50"
+                            : "bg-panel text-mute hover:text-paper border border-line"
+                        }`}
+                        title="Toggle VEED-style Subtitle Styles Library"
+                      >
+                        <Sparkles size={12} className="text-amber-400" />
+                        <span>Style Library (VEED)</span>
+                      </button>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      {/* Font Family */}
                       <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
                         <span className="text-mute text-[11px]">Font:</span>
                         <select
-                          value={subFont}
-                          onChange={(e) => setSubFont(e.target.value)}
+                          value={currentSubtitleStyle.font_family || "Khand"}
+                          onChange={(e) => {
+                            setCurrentSubtitleStyle((prev) => ({ ...prev, font_family: e.target.value }));
+                            setSubFont(e.target.value);
+                          }}
                           className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
                         >
                           <option value="Khand">Khand Bold (AP Style)</option>
@@ -1081,44 +1259,38 @@ export default function App() {
                         </select>
                       </div>
 
-                      {/* 45 Advanced Animation Effects categorized */}
                       <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
-                        <span className="text-mute text-[11px]">FX / Animation:</span>
+                        <span className="text-mute text-[11px]">FX:</span>
                         <select
-                          value={subEffect}
-                          onChange={(e) => setSubEffect(e.target.value)}
-                          className="bg-transparent text-amber-300 font-bold focus:outline-none text-xs cursor-pointer max-w-[210px] truncate"
+                          value={currentSubtitleStyle.animation || "popup"}
+                          onChange={(e) => {
+                            setCurrentSubtitleStyle((prev) => ({ ...prev, animation: e.target.value }));
+                            setSubEffect(e.target.value);
+                          }}
+                          className="bg-transparent text-amber-300 font-bold focus:outline-none text-xs cursor-pointer max-w-[180px] truncate"
                         >
-                          <optgroup label="✨ Viral Punch & Word FX">
-                            <option value="popup">21. Word Pop (Punch-In)</option>
-                            <option value="pop_keyword">4. Bold Emphasis &amp; Large Keyword</option>
-                            <option value="bounce">25. Word Bounce</option>
-                            <option value="shake">26. Word Shake</option>
-                            <option value="flip">23. Word Flip (3D)</option>
-                            <option value="spin">24. Word Spin</option>
-                            <option value="pulse">28. Word Pulse</option>
-                            <option value="stretch">27. Word Stretch / Squeeze</option>
-                          </optgroup>
-                          <optgroup label="⚡ Advanced Visual & Typography">
-                            <option value="glitch">31. Glitch Typography &amp; RGB Split</option>
-                            <option value="neon">33. Neon Glow Typography</option>
-                            <option value="wave">36. Text Wave &amp; Liquid</option>
-                            <option value="3d">45. 3D Extrusion &amp; Shadow</option>
-                            <option value="gradient">43. Gradient Color Shift</option>
-                            <option value="glow">Soft Warm Diffuse Glow</option>
-                            <option value="boxed">Boxed Dark Contrast Pill</option>
-                          </optgroup>
+                          <option value="popup">Word Pop (Punch-In)</option>
+                          <option value="pop_keyword">AI Keyword Focus</option>
+                          <option value="karaoke">Karaoke Highlight</option>
+                          <option value="bounce">Word Bounce</option>
+                          <option value="slide_up">Slide Up</option>
+                          <option value="smooth_reveal">Smooth Reveal</option>
+                          <option value="spring">Spring Elastic</option>
+                          <option value="glitch">RGB Glitch Split</option>
+                          <option value="neon">Cyberpunk Neon</option>
                         </select>
                       </div>
 
-                      {/* Font Color */}
                       <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
                         <span className="text-mute text-[11px]">Color:</span>
                         <select
-                          value={subColor}
-                          onChange={(e) => setSubColor(e.target.value)}
+                          value={currentSubtitleStyle.primary_color || "#F8F0AE"}
+                          onChange={(e) => {
+                            setCurrentSubtitleStyle((prev) => ({ ...prev, primary_color: e.target.value }));
+                            setSubColor(e.target.value);
+                          }}
                           className="bg-transparent font-bold focus:outline-none text-xs cursor-pointer"
-                          style={{ color: subColor }}
+                          style={{ color: currentSubtitleStyle.primary_color || "#F8F0AE" }}
                         >
                           <option value="#F8F0AE">Cream Yellow (#F8F0AE)</option>
                           <option value="#FFFF00">Vibrant Yellow (#FFFF00)</option>
@@ -1129,32 +1301,19 @@ export default function App() {
                         </select>
                       </div>
 
-                      {/* Casing */}
                       <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
                         <span className="text-mute text-[11px]">Case:</span>
                         <select
-                          value={subCase}
-                          onChange={(e) => setSubCase(e.target.value)}
+                          value={currentSubtitleStyle.casing || "uppercase"}
+                          onChange={(e) => {
+                            setCurrentSubtitleStyle((prev) => ({ ...prev, casing: e.target.value as any }));
+                            setSubCase(e.target.value);
+                          }}
                           className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
                         >
                           <option value="uppercase">UPPERCASE (Shorts)</option>
                           <option value="normal">Normal Speech</option>
                           <option value="lowercase">lowercase</option>
-                        </select>
-                      </div>
-
-                      {/* Size */}
-                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
-                        <span className="text-mute text-[11px]">Size:</span>
-                        <select
-                          value={subSize}
-                          onChange={(e) => setSubSize(e.target.value as any)}
-                          className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
-                        >
-                          <option value="sm">Small</option>
-                          <option value="md">Medium</option>
-                          <option value="lg">Large (Recommended)</option>
-                          <option value="xl">Extra Large</option>
                         </select>
                       </div>
                     </div>
@@ -1202,6 +1361,81 @@ export default function App() {
 
                   {/* Timeline Strip */}
                   <div className="rounded-lg border border-line bg-panel p-4 space-y-3">
+                    {/* Text-to-Timeline & Auto-Cut Dialogue Bar */}
+                    <div className="rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/30 via-ink to-amber-950/20 p-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="flex items-center gap-1.5 text-xs font-bold text-amber-300 shrink-0">
+                          <Scissors size={14} className="text-amber-400" />
+                          <span>Text-to-Timeline Cut:</span>
+                        </span>
+
+                        <div className="relative flex-1 min-w-[220px]">
+                          <input
+                            type="text"
+                            placeholder="Type or paste spoken sentence / dialogue to auto-snap timeline..."
+                            value={timelineTextQuery}
+                            onChange={(e) => setTimelineTextQuery(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key === "Enter" && timelineTextQuery.trim().length > 2 && project?.id) {
+                                setTimelineMatching(true);
+                                setErr("");
+                                try {
+                                  const res = await api.transcription.matchText(project.id, timelineTextQuery.trim());
+                                  setTimelineMatchInfo(res);
+                                  setStartS(res.start);
+                                  setEndS(res.end);
+                                  seek(res.start);
+                                } catch (err: any) {
+                                  setErr(err.message || "Could not find spoken dialogue in video transcript.");
+                                } finally {
+                                  setTimelineMatching(false);
+                                }
+                              }
+                            }}
+                            className="w-full rounded border border-line bg-ink px-3 py-1 text-xs text-paper placeholder-mute/60 focus:border-amber-400 focus:outline-none"
+                          />
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            if (!timelineTextQuery.trim() || !project?.id) return;
+                            setTimelineMatching(true);
+                            setErr("");
+                            try {
+                              const res = await api.transcription.matchText(project.id, timelineTextQuery.trim());
+                              setTimelineMatchInfo(res);
+                              setStartS(res.start);
+                              setEndS(res.end);
+                              seek(res.start);
+                            } catch (err: any) {
+                              setErr(err.message || "Could not find spoken dialogue in video transcript.");
+                            } finally {
+                              setTimelineMatching(false);
+                            }
+                          }}
+                          disabled={timelineMatching || !timelineTextQuery.trim()}
+                          className="inline-flex items-center gap-1.5 rounded bg-amber-400 px-3 py-1 text-xs font-bold text-ink hover:bg-amber-300 disabled:opacity-40 transition-colors shrink-0 shadow-sm"
+                        >
+                          {timelineMatching ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                          Snap & Cut Here
+                        </button>
+                      </div>
+
+                      {timelineMatchInfo && (
+                        <div className="mt-2 flex items-center justify-between border-t border-amber-500/20 pt-1.5 text-[11px] text-amber-200">
+                          <span className="truncate">
+                            âœ“ Matched: <strong>{fmt(timelineMatchInfo.start)} &rarr; {fmt(timelineMatchInfo.end)}</strong> ({timelineMatchInfo.duration}s) &bull; {timelineMatchInfo.confidence}% accuracy &bull; "{timelineMatchInfo.matched_text}"
+                          </span>
+                          <button
+                            onClick={() => setTimelineMatchInfo(null)}
+                            className="text-mute hover:text-paper ml-2 shrink-0"
+                          >
+                            &times;
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold uppercase tracking-wider text-mute">
                         Selection Length: <span className="text-trim font-mono">{fmt(end - start)}</span>
@@ -1289,19 +1523,134 @@ export default function App() {
             </main>
 
             {/* Right Inspector Panel */}
-            <aside className="w-80 shrink-0 border-l border-line bg-panel p-5 space-y-4 overflow-y-auto hidden xl:block">
-              <h3 className="font-extrabold text-sm uppercase tracking-wider text-paper">Export Selection</h3>
-              <div>
-                <div className="mb-1 text-xs text-mute">Mode</div>
-                <Seg
-                  value={opt.mode}
-                  onChange={(m) => setOpt({ ...opt, mode: m })}
-                  options={[["precise", "Precise"], ["fast", "Fast"]]}
-                />
-                <p className="mt-1 text-xs text-mute">
-                  {fast ? "Stream copy: instant, but starts at previous keyframe." : "Re-encodes for frame-accurate cuts."}
-                </p>
-              </div>
+            <aside className="w-80 shrink-0 border-l border-line bg-panel space-y-4 overflow-y-auto hidden xl:flex flex-col">
+              {/* Toggle Header for Export vs Subtitle Customizer */}
+              {showSubtitlePanel ? (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between border-b border-line px-4 py-2.5 bg-ink/40">
+                    <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-amber-400" />
+                      Subtitle Customizer (VEED)
+                    </span>
+                    <button
+                      onClick={() => setShowSubtitlePanel(false)}
+                      className="text-xs text-mute hover:text-paper"
+                    >
+                      Show Export Settings &rarr;
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <SubtitleCustomizerPanel
+                      presets={subtitlePresets}
+                      currentStyle={
+                        selectedSubtitleCueKey && individualSubtitleStyles[selectedSubtitleCueKey]
+                          ? individualSubtitleStyles[selectedSubtitleCueKey]
+                          : currentSubtitleStyle
+                      }
+                      onStyleChange={(updates) => {
+                        if (selectedSubtitleCueKey) {
+                          setIndividualSubtitleStyles((prev) => ({
+                            ...prev,
+                            [selectedSubtitleCueKey]: {
+                              ...(prev[selectedSubtitleCueKey] || currentSubtitleStyle),
+                              ...updates,
+                            },
+                          }));
+                        } else {
+                          setCurrentSubtitleStyle((prev) => ({ ...prev, ...updates }));
+                        }
+                      }}
+                      onApplyPreset={(preset) => {
+                        const newStyle: SubtitleStyle = {
+                          ...currentSubtitleStyle,
+                          id: preset.id,
+                          name: preset.name,
+                          category: preset.category,
+                          font_family: preset.font_family,
+                          font_size: preset.font_size,
+                          font_weight: preset.font_weight,
+                          primary_color: preset.primary_color,
+                          highlight_color: preset.highlight_color,
+                          outline_color: preset.outline_color,
+                          outline_width: preset.outline_width,
+                          shadow_color: preset.shadow_color,
+                          shadow_depth: preset.shadow_depth,
+                          shadow_blur: preset.shadow_blur,
+                          bg_color: preset.bg_color,
+                          border_style: preset.border_style,
+                          alignment: preset.alignment,
+                          margin_v: preset.margin_v,
+                          casing: preset.casing,
+                          animation: preset.animation,
+                        };
+                        if (selectedSubtitleCueKey) {
+                          setIndividualSubtitleStyles((prev) => ({
+                            ...prev,
+                            [selectedSubtitleCueKey]: newStyle,
+                          }));
+                        } else {
+                          setCurrentSubtitleStyle(newStyle);
+                        }
+                        setSubFont(preset.font_family);
+                        setSubColor(preset.primary_color);
+                        setSubEffect(preset.animation || "popup");
+                        setSubCase(preset.casing || "uppercase");
+                      }}
+                      selectedSegmentId={selectedSubtitleCueKey}
+                      selectedSegmentText={
+                        activeChunk && `${activeChunk.start}_${activeChunk.end}` === selectedSubtitleCueKey
+                          ? activeChunk.text
+                          : undefined
+                      }
+                      onResetIndividualStyle={() => {
+                        if (selectedSubtitleCueKey) {
+                          setIndividualSubtitleStyles((prev) => {
+                            const copy = { ...prev };
+                            delete copy[selectedSubtitleCueKey];
+                            return copy;
+                          });
+                          setSelectedSubtitleCueKey(null);
+                        }
+                      }}
+                      onApplyPositionToAll={() => {
+                        if (selectedSubtitleCueKey && individualSubtitleStyles[selectedSubtitleCueKey]) {
+                          const customPos = individualSubtitleStyles[selectedSubtitleCueKey];
+                          setCurrentSubtitleStyle((prev) => ({
+                            ...prev,
+                            pos_x: customPos.pos_x,
+                            pos_y: customPos.pos_y,
+                            alignment: customPos.alignment,
+                            rotation: customPos.rotation,
+                          }));
+                          // Clear per-cue position overrides so all match this new global position
+                          setIndividualSubtitleStyles({});
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between border-b border-line pb-2">
+                    <h3 className="font-extrabold text-sm uppercase tracking-wider text-paper">Export Selection</h3>
+                    <button
+                      onClick={() => setShowSubtitlePanel(true)}
+                      className="text-xs font-bold text-amber-400 hover:text-amber-300 underline"
+                    >
+                      &larr; Subtitle Styles
+                    </button>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-mute">Mode</div>
+                    <Seg
+                      value={opt.mode}
+                      onChange={(m) => setOpt({ ...opt, mode: m })}
+                      options={[["precise", "Precise"], ["fast", "Fast"]]}
+                    />
+                    <p className="mt-1 text-xs text-mute">
+                      {fast ? "Stream copy: instant, but starts at previous keyframe." : "Re-encodes for frame-accurate cuts."}
+                    </p>
+                  </div>
 
               <div>
                 <div className="mb-1 text-xs text-mute">Resolution</div>
@@ -1495,11 +1844,13 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                </div>
               </div>
-            </aside>
-          </>
-        )}
-      </div>
+            )}
+          </aside>
+        </>
+      )}
+    </div>
 
       {/* Modals */}
       {showProjectsModal && (

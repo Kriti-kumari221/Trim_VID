@@ -144,7 +144,7 @@ export function MusicStudioView({ project, projectId, selectedTrackId, onSelectT
     setAuditName(t.name);
     setAuditMood(t.mood || "philosophical");
     setAuditGenre(t.genre || "cinematic");
-    setAuditTempo(t.tempo || 80);
+    setAuditTempo(typeof t.tempo === "number" ? t.tempo : parseInt(String(t.tempo || 80), 10) || 80);
     setAuditEnergy((t.energy as "low" | "medium" | "high") || "medium");
   };
 

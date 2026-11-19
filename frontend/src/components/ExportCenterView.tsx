@@ -9,6 +9,7 @@ interface Props {
   musicTracks: MusicTrack[];
   selectedMusicId: string | null;
   selectedSubtitlePreset?: string;
+  subtitleConfig?: any;
 }
 
 export function ExportCenterView({
@@ -17,13 +18,15 @@ export function ExportCenterView({
   clips,
   musicTracks,
   selectedMusicId,
+  selectedSubtitlePreset,
+  subtitleConfig,
 }: Props) {
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [resolution, setResolution] = useState("1080p");
   const [exportName, setExportName] = useState(`${projectName}_Short`);
   const [musicTrackId, setMusicTrackId] = useState<string | null>(selectedMusicId);
   const [musicVolume, setMusicVolume] = useState(0.2);
-  const [subtitlePreset, setSubtitlePreset] = useState<string | null>(null);
+  const [subtitlePreset, setSubtitlePreset] = useState<string | null>(selectedSubtitlePreset || "pop_ap_yellow");
 
   // Audio Enhancements
   const [noiseReduction, setNoiseReduction] = useState(true);
@@ -58,6 +61,7 @@ export function ExportCenterView({
         music_track_id: musicTrackId,
         music_volume: musicVolume,
         subtitle_preset: subtitlePreset,
+        subtitle_config: subtitleConfig,
         aspect_ratio: aspectRatio,
         resolution: resolution,
         enhancements: {
