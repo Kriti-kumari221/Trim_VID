@@ -37,12 +37,17 @@ def _get_cookie_file_ts() -> Optional[Path]:
         cookie_path = config.DATA_DIR / "cookies.txt"
         cookie_path.write_text(cookie_text, encoding="utf-8")
         return cookie_path
-    local_cookie = config.DATA_DIR / "cookies.txt"
-    if local_cookie.is_file():
-        return local_cookie
-    base_cookie = config.BASE_DIR / "cookies.txt"
-    if base_cookie.is_file():
-        return base_cookie
+
+    # Check candidates for baked-in cookies.txt in Docker container
+    for p in [
+        config.DATA_DIR / "cookies.txt",
+        config.BASE_DIR / "cookies.txt",
+        config.BASE_DIR.parent / "cookies.txt",
+        Path("/app/backend/cookies.txt"),
+        Path("/app/cookies.txt"),
+    ]:
+        if p.is_file() and p.stat().st_size > 100:
+            return p
     return None
 
 
