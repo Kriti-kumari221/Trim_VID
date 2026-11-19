@@ -25,8 +25,17 @@ def _get_cookie_file_ts() -> Optional[Path]:
     """Return path to cookies.txt from env var, data dir, or base dir."""
     env_cookies = os.getenv("YTDLP_COOKIES")
     if env_cookies and env_cookies.strip():
+        cookie_text = env_cookies.strip()
+        if not cookie_text.startswith("#") and "\n" not in cookie_text and len(cookie_text) > 50:
+            try:
+                import base64
+                decoded = base64.b64decode(cookie_text).decode("utf-8", errors="ignore")
+                if "# Netscape" in decoded or "\t" in decoded:
+                    cookie_text = decoded
+            except Exception:
+                pass
         cookie_path = config.DATA_DIR / "cookies.txt"
-        cookie_path.write_text(env_cookies, encoding="utf-8")
+        cookie_path.write_text(cookie_text, encoding="utf-8")
         return cookie_path
     local_cookie = config.DATA_DIR / "cookies.txt"
     if local_cookie.is_file():

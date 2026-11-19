@@ -139,6 +139,15 @@ def _get_cookie_file() -> Optional[Path]:
     """Checks for cookie file from environment variable YTDLP_COOKIES or local cookies.txt."""
     cookie_content = os.getenv("YTDLP_COOKIES", "").strip()
     if cookie_content:
+        # Check if cookie_content is base64 encoded (common on cloud hosts to preserve newlines)
+        if not cookie_content.startswith("#") and "\n" not in cookie_content and len(cookie_content) > 50:
+            try:
+                import base64
+                decoded = base64.b64decode(cookie_content).decode("utf-8", errors="ignore")
+                if "# Netscape" in decoded or "\t" in decoded:
+                    cookie_content = decoded
+            except Exception:
+                pass
         cookie_path = config.DATA_DIR / "cookies.txt"
         cookie_path.write_text(cookie_content, encoding="utf-8")
         return cookie_path
@@ -189,12 +198,14 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
                 progress_cb(min(0.95, downloaded / total))
 
     # Download maximum quality available: prioritize default/mweb/ios with separate video+audio merge
-    # High-definition (1080p/1440p/720p) first; NEVER fall back to low 360p (format 18) unless high-res streams fail completely
+    # High-definition (1080p/1440p/720p) first, followed by resilient fallbacks (best / mp4)
     client_configs = [
         (None,             "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
         (["ios"],          "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
         (["mweb"],         "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
-        (["android"],      "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/22/best"),
+        (["android"],      "bestvideo+bestaudio/best/22/18"),
+        (None,             "bestvideo*+bestaudio/best"),
+        (None,             "best"),
     ]
 
     last_exc: Exception | None = None
