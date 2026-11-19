@@ -212,15 +212,15 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
     # Download maximum quality available: prioritize default/mweb/ios with separate video+audio merge
     # High-definition (1080p/1440p/720p) first, followed by resilient fallbacks (best / mp4)
     client_configs = [
-        # Fallback 1: High definition (720p+) with web client
-        (None,             "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
-        # Fallback 2: Any available video+audio stream
-        (None,             "bestvideo*+bestaudio/best"),
-        # Fallback 3: iOS player client (often bypasses YouTube IP rate limits)
+        # Strategy 1: iOS client with cookies & mobile headers (Bypasses web SABR / bot challenge on datacenter IPs)
         (["ios"],          "bestvideo*+bestaudio/best"),
-        # Fallback 4: Android mobile player client
+        # Strategy 2: Android client
         (["android"],      "bestvideo*+bestaudio/best"),
-        # Fallback 5: Absolute single stream fallback (works when DASH/separate streams are throttled)
+        # Strategy 3: MWeb (Mobile Web)
+        (["mweb"],         "bestvideo*+bestaudio/best"),
+        # Strategy 4: Web with high definition (720p+)
+        (None,             "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
+        # Strategy 5: Any available stream
         (None,             "b/best"),
     ]
 
