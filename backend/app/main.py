@@ -179,6 +179,9 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
     cookie_file = _get_cookie_file()
     if cookie_file:
         opts["cookiefile"] = str(cookie_file)
+        print(f"[yt-dlp] Using cookie file at: {cookie_file} (size: {cookie_file.stat().st_size} bytes)")
+    else:
+        print("[yt-dlp] No cookie file found (YTDLP_COOKIES not set or empty)")
     proxy = os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
     if proxy:
         opts["proxy"] = proxy
