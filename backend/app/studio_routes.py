@@ -75,6 +75,12 @@ class YouTubeTranscribeReq(BaseModel):
 class UpdateTranscriptReq(BaseModel):
     segments: List[Dict[str, Any]]
 
+class ParseScriptReq(BaseModel):
+    script_text: str
+
+class ParseTranscriptReq(BaseModel):
+    raw_text: str
+
 class GenerateScriptReq(BaseModel):
     topic_id: Optional[str] = None
     duration_target: int = 60
@@ -92,7 +98,16 @@ class GenerateMusicReq(BaseModel):
 
 class DetectMusicReq(BaseModel):
     script_id: Optional[str] = None
+    script_text: Optional[str] = None
     api_key: Optional[str] = None
+
+class AuditMusicReq(BaseModel):
+    name: Optional[str] = None
+    mood: Optional[str] = None
+    genre: Optional[str] = None
+    tempo: Optional[int] = None
+    energy: Optional[str] = None
+    re_render: bool = False
 
 class AssembleReq(BaseModel):
     clip_ids: List[str]
@@ -331,14 +346,75 @@ def transcribe_project_route(project_id: str, req: TranscribeReq):
     _studio_pool.submit(_run)
     return {"task_id": task["id"], "status": "running"}
 
+@router.post("/projects/{project_id}/transcript/import-file")
+async def import_transcript_file_route(project_id: str, file: UploadFile = File(...)):
+    """Imports an SRT, VTT, or TXT transcript file directly from the user's local PC."""
+    import re
+    content_bytes = await file.read()
+    raw_text = content_bytes.decode("utf-8", errors="replace")
+    
+    from . import ai_selection_service
+    segments = []
+    
+    # Check if format is SRT / VTT or standard timestamped text
+    # Standard SRT pattern:
+    # 1
+    # 00:00:01,000 --> 00:00:04,000
+    # Text line
+    srt_pattern = re.compile(r"(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{3})\r?\n(.*?)(?=\r?\n\r?\n|\Z)", re.DOTALL)
+    srt_matches = list(srt_pattern.finditer(raw_text))
+    
+    if srt_matches:
+        for idx, m in enumerate(srt_matches):
+            t_start_str = m.group(1).replace(",", ".")
+            t_end_str = m.group(2).replace(",", ".")
+            clean_txt = re.sub(r"<[^>]+>", "", m.group(3)).replace("\r\n", " ").replace("\n", " ").strip()
+            s_sec = ai_selection_service.parse_time_str(t_start_str)
+            e_sec = ai_selection_service.parse_time_str(t_end_str)
+            segments.append({
+                "id": f"seg_{idx+1}",
+                "start": s_sec,
+                "end": e_sec,
+                "speaker": "Speaker",
+                "text": clean_txt
+            })
+    else:
+        # Check standard YouTube / Tactiq timestamp format: 00:00:00.000 Text...
+        parsed_raw = ai_selection_service.parse_raw_transcript_text(raw_text)
+        for idx, p in enumerate(parsed_raw):
+            segments.append({
+                "id": f"seg_{idx+1}",
+                "start": p["start"],
+                "end": p["start"] + p["duration"],
+                "speaker": "Speaker",
+                "text": p["text"]
+            })
+            
+    if not segments:
+        raise HTTPException(400, "Could not parse timestamps from file. Supported formats: .srt, .vtt, or timestamped .txt")
+        
+    return transcription_service.update_transcript_segments(project_id, segments)
+
+@router.get("/projects/{project_id}/transcript/chunks")
+def get_transcript_chunks_route(project_id: str, words_per_cue: int = 3):
+    """Returns transcript pre-chunked into punchy 2-4 word spoken cadence cues for live subtitle preview."""
+    conn = db.get_connection()
+    c = conn.cursor()
+    row = c.execute("SELECT segments_json FROM transcripts WHERE project_id = ?", (project_id,)).fetchone()
+    conn.close()
+    if not row or not row["segments_json"]:
+        return []
+    segments = json.loads(row["segments_json"])
+    return transcription_service.chunk_segments_into_speech_rhythm(segments, words_per_cue=words_per_cue)
+
 @router.put("/projects/{project_id}/transcript")
 def update_transcript_route(project_id: str, req: UpdateTranscriptReq):
     return transcription_service.update_transcript_segments(project_id, req.segments)
 
 @router.get("/projects/{project_id}/transcript/export")
-def export_transcript_route(project_id: str, format: str = "srt"):
+def export_transcript_route(project_id: str, format: str = "srt", start: Optional[float] = None, end: Optional[float] = None):
     try:
-        filename, media_type, content = transcription_service.export_transcript_file(project_id, format)
+        filename, media_type, content = transcription_service.export_transcript_file(project_id, format, start_time=start, end_time=end)
         return Response(content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
     except Exception as e:
         raise HTTPException(400, str(e))
@@ -373,10 +449,18 @@ def generate_script_route(project_id: str, req: GenerateScriptReq):
     except Exception as e:
         raise HTTPException(400, str(e))
 
-@router.post("/projects/{project_id}/scripts/{script_id}/map-to-clips")
-def map_script_clips_route(project_id: str, script_id: str, req: MapScriptClipsReq):
+@router.post("/projects/{project_id}/scripts/import-custom")
+def import_custom_script_route(project_id: str, req: ParseScriptReq):
     try:
-        clips = ai_analyzer_service.map_script_to_project_clips(project_id, script_id, req.folder_name)
+        return ai_analyzer_service.save_custom_parsed_script(project_id, req.script_text)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+@router.post("/projects/{project_id}/scripts/{script_id}/map-to-clips")
+def map_script_clips_route(project_id: str, script_id: str, req: Optional[MapScriptClipsReq] = None):
+    try:
+        folder_name = req.folder_name if req and req.folder_name else "Script Clips"
+        clips = ai_analyzer_service.map_script_to_project_clips(project_id, script_id, folder_name)
         return {"created_clips": clips}
     except Exception as e:
         raise HTTPException(400, str(e))
@@ -402,10 +486,43 @@ def generate_music_route(req: GenerateMusicReq, project_id: Optional[str] = None
 def detect_music_from_script_route(project_id: str, req: Optional[DetectMusicReq] = None):
     try:
         script_id = req.script_id if req else None
+        script_text = req.script_text if req else None
         api_key = req.api_key if req else None
-        return music_service.detect_and_compose_from_script(project_id, script_id, api_key)
+        return music_service.detect_and_compose_from_script(
+            project_id=project_id,
+            script_id=script_id,
+            custom_script_text=script_text,
+            api_key=api_key
+        )
     except Exception as e:
         raise HTTPException(500, f"Script-to-music composition failed: {e}")
+
+@router.put("/music/{track_id}/audit")
+def audit_music_track_route(track_id: str, req: AuditMusicReq):
+    try:
+        return music_service.audit_and_update_track(
+            track_id=track_id,
+            name=req.name,
+            mood=req.mood,
+            genre=req.genre,
+            tempo=req.tempo,
+            energy=req.energy,
+            re_render=req.re_render
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Track auditing/modification failed: {e}")
+
+@router.delete("/music/{track_id}")
+def delete_music_track_route(track_id: str):
+    conn = db.get_connection()
+    c = conn.cursor()
+    row = c.execute("SELECT filename FROM music_tracks WHERE id = ?", (track_id,)).fetchone()
+    if row and row["filename"]:
+        (config.DATA_DIR / "music" / row["filename"]).unlink(missing_ok=True)
+    c.execute("DELETE FROM music_tracks WHERE id = ?", (track_id,))
+    conn.commit()
+    conn.close()
+    return {"deleted": True, "track_id": track_id}
 
 @router.get("/music/{track_id}/audio")
 def get_music_audio(track_id: str):
@@ -497,6 +614,33 @@ def save_cookies_route(req: CookieReq):
     cookie_path.parent.mkdir(parents=True, exist_ok=True)
     cookie_path.write_text(req.cookies.strip(), encoding="utf-8")
     return {"saved": True, "size": len(req.cookies)}
+
+class ParseScriptReq(BaseModel):
+    script_text: str
+
+class ParseTranscriptReq(BaseModel):
+    raw_text: str
+
+@router.post("/auto-shorts/parse-script")
+def parse_script_route(req: ParseScriptReq):
+    """Parses a structured user reel script with timestamps into ready-to-render scenes and an overall range."""
+    from . import ai_selection_service
+    overall_range, scenes = ai_selection_service.parse_custom_script_into_scenes(req.script_text)
+    return {
+        "overall_range": overall_range,
+        "scenes": scenes,
+        "total_scenes": len(scenes)
+    }
+
+@router.post("/auto-shorts/parse-transcript")
+def parse_transcript_route(req: ParseTranscriptReq):
+    """Parses pasted YouTube / Tactiq.io transcript with timestamps into standard segment objects."""
+    from . import ai_selection_service
+    segments = ai_selection_service.parse_raw_transcript_text(req.raw_text)
+    return {
+        "segments": segments,
+        "total_segments": len(segments)
+    }
 
 # ----------------- Auto Shorts Pipeline Endpoints -----------------
 class CreateAutoShortsReq(BaseModel):

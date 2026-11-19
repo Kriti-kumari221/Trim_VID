@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Scissors, Upload, Link2, Play, Pause, Volume2, VolumeX, Maximize, ZoomIn, ZoomOut,
   Download, X, ChevronLeft, ChevronRight, Home, HelpCircle, Settings, Loader2, Eye,
-  Film, Folder, Mic, Sparkles, Music, Type, HardDrive, Plus, Check, RefreshCw
+  Film, Folder, Mic, Sparkles, Music, Type, HardDrive, Plus, Check, RefreshCw, RotateCcw, FileText
 } from "lucide-react";
 
 import { api, apiUrl, Meta, Job, Loaded, Project, ProjectClip, MusicTrack } from "./api";
@@ -77,6 +77,8 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [showProjectsModal, setShowProjectsModal] = useState(false);
   const [showGDriveModal, setShowGDriveModal] = useState(false);
+  const [showNewLinkModal, setShowNewLinkModal] = useState(false);
+  const [newLinkInput, setNewLinkInput] = useState("");
 
   // Active studio tab
   type StudioTab = "editor" | "auto_shorts" | "transcript" | "scripts" | "music" | "exports";
@@ -112,6 +114,60 @@ export default function App() {
   const [cookieConfigured, setCookieConfigured] = useState(false);
   const [cookieSaving, setCookieSaving] = useState(false);
   const [cookieMsg, setCookieMsg] = useState("");
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeMsg, setTranscribeMsg] = useState("");
+
+  // Real-time Subtitle Overlay on Video Player & Timeline
+  const [showSubtitlesOverlay, setShowSubtitlesOverlay] = useState(true);
+  const [subFont, setSubFont] = useState("Khand"); // Khand, Impact, Arial, Devanagari, Georgia
+  const [subEffect, setSubEffect] = useState("popup"); // popup, pop_keyword, bounce, shake, flip, spin, pulse, stretch, glitch, wave, neon, 3d, liquid, boxed
+  const [subCase, setSubCase] = useState("uppercase"); // uppercase, normal, lowercase
+  const [subColor, setSubColor] = useState("#F8F0AE"); // Cream yellow (AP classic), Yellow, Neon Green, White, Cyan
+  const [subSize, setSubSize] = useState<"sm" | "md" | "lg" | "xl">("lg");
+  const [playerAspectRatio, setPlayerAspectRatio] = useState<"auto" | "9:16" | "16:9" | "1:1" | "fit">("auto");
+  const [previewChunks, setPreviewChunks] = useState<Array<{ start: number; end: number; speaker: string; text: string }>>([]);
+
+  // Fetch or update preview chunks whenever project transcript updates or project changes
+  useEffect(() => {
+    if (project?.id) {
+      // First, if project transcript segments exist locally, convert them to preview chunks immediately
+      if (project.transcript && project.transcript.segments && project.transcript.segments.length > 0) {
+        // Build fallback chunks locally so preview works even before API returns
+        const fallbackChunks: Array<{ start: number; end: number; speaker: string; text: string }> = [];
+        for (const seg of project.transcript.segments) {
+          const words = seg.text.trim().split(/\s+/);
+          if (words.length <= 4) {
+            fallbackChunks.push({ start: seg.start, end: seg.end, speaker: seg.speaker, text: seg.text });
+          } else {
+            const dur = Math.max(seg.end - seg.start, 0.5);
+            const wDur = dur / words.length;
+            for (let i = 0; i < words.length; i += 3) {
+              const slice = words.slice(i, i + 3);
+              const cStart = seg.start + (i * wDur);
+              const cEnd = Math.min(seg.end, cStart + (slice.length * wDur));
+              fallbackChunks.push({ start: cStart, end: cEnd, speaker: seg.speaker, text: slice.join(" ") });
+            }
+          }
+        }
+        setPreviewChunks(fallbackChunks);
+      }
+      
+      // Also fetch the refined server-side speech-cadence chunks
+      api.transcription.chunks(project.id, 3)
+        .then((chunks) => {
+          if (chunks && chunks.length > 0) {
+            setPreviewChunks(chunks);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setPreviewChunks([]);
+    }
+  }, [project?.id, project?.transcript]);
+
+  // Compute currently active chunk at playback time `cur`
+  // Added tolerance of 0.15s to prevent flicker between speech boundaries
+  const activeChunk = previewChunks.find((c) => cur >= (c.start - 0.05) && cur <= (c.end + 0.15));
 
   useEffect(() => {
     if (panel === "settings") {
@@ -378,6 +434,38 @@ export default function App() {
     v.current?.play();
   };
 
+  const handleGenerateCaptions = async () => {
+    if (!project || !vid) return;
+    setTranscribing(true);
+    setTranscribeMsg("Starting AI Speech-to-Text for device video...");
+    try {
+      const { task_id } = await api.transcription.transcribe(project.id, "auto", "base");
+      setTranscribeMsg("Extracting audio from video...");
+      let attempts = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const task = await api.transcription.pollTask(task_id);
+        attempts++;
+        if (task.status === "done") {
+          const result = await api.transcription.taskResult(task_id);
+          setProject({ ...project, transcript: result });
+          setTranscribeMsg("Captions generated successfully!");
+          setTimeout(() => setTranscribeMsg(""), 3000);
+          break;
+        } else if (task.status === "failed") {
+          throw new Error(task.error || "Caption generation failed");
+        }
+        if (attempts < 5) setTranscribeMsg("Extracting audio from video...");
+        else if (attempts < 15) setTranscribeMsg("AI recognizing speech & generating timestamps...");
+        else setTranscribeMsg("Almost done — finalizing sentences...");
+      }
+    } catch (e: any) {
+      setTranscribeMsg(`Error: ${e.message}`);
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
   return (
     <div className="flex h-screen flex-col bg-ink text-paper overflow-hidden">
       {/* Top Studio Navbar */}
@@ -461,6 +549,16 @@ export default function App() {
 
         {/* Right Tools */}
         <div className="flex items-center gap-2">
+          {meta && (
+            <button
+              onClick={() => setShowNewLinkModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-panel px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 transition-colors"
+              title="Change YouTube URL or load another video into Editor"
+            >
+              <RotateCcw size={13} className="text-amber-400" />
+              <span>Change Video / Link</span>
+            </button>
+          )}
           <button
             onClick={() => setShowGDriveModal(true)}
             className="hidden sm:inline-flex items-center gap-1.5 rounded-md border border-line bg-panel px-3 py-1.5 text-xs font-semibold text-paper hover:bg-ink"
@@ -598,6 +696,11 @@ export default function App() {
               analysis={project.analysis}
               scripts={project.scripts}
               onSeek={seek}
+              onSelectCut={(s, e) => {
+                setStartS(s);
+                setEndS(e);
+                seek(s);
+              }}
               onAnalysisUpdated={(a) => setProject({ ...project, analysis: a })}
               onScriptsUpdated={(s) => setProject({ ...project, scripts: s })}
               onClipsCreated={() => loadFullProject(project.id)}
@@ -732,24 +835,329 @@ export default function App() {
               ) : (
                 /* Interactive Player & Timeline */
                 <div className="p-5 flex-1 flex flex-col justify-between max-w-5xl mx-auto w-full space-y-4">
-                  {/* Video Screen */}
-                  <div className="relative rounded-lg bg-black overflow-hidden aspect-video w-full shadow-2xl border border-line">
-                    <video
-                      ref={v}
-                      src={apiUrl(`/api/video/${vid}/source`)}
-                      className="h-full w-full object-contain cursor-pointer"
-                      onClick={togglePlay}
-                      onPlay={() => setPlaying(true)}
-                      onPause={() => setPlaying(false)}
-                      onTimeUpdate={(e) => {
-                        const t = e.currentTarget.currentTime;
-                        setCur(t);
-                        if (selOnly.current && t >= sel.current.e) {
-                          e.currentTarget.pause();
-                          selOnly.current = false;
-                        }
-                      }}
-                    />
+                  {/* Top Bar with Title, Screen Aspect Ratio Switcher, and Change Link Button */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-panel border border-line px-4 py-2.5 rounded-lg">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Film size={16} className="text-trim shrink-0" />
+                      <span className="text-xs font-semibold text-paper truncate max-w-xs sm:max-w-md">
+                        {meta?.name || "Active Video"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* Screen / Aspect Ratio Selector (Auto Source vs 9:16 Shorts vs 16:9 Landscape vs 1:1 Square) */}
+                      <div className="flex items-center gap-1 rounded-lg border border-line bg-ink px-2 py-1 text-xs">
+                        <span className="text-[11px] text-mute font-semibold">Frame:</span>
+                        <div className="flex rounded overflow-hidden border border-line/60">
+                          <button
+                            onClick={() => setPlayerAspectRatio("auto")}
+                            className={`px-2 py-0.5 text-[11px] font-bold transition-colors ${playerAspectRatio === "auto" ? "bg-amber-400 text-ink" : "text-mute hover:text-paper"}`}
+                            title="Auto Detect Source Aspect Ratio (9:16 vertical or 16:9 widescreen)"
+                          >
+                            Auto ({meta?.height && meta?.width ? (meta.height > meta.width ? "9:16" : "16:9") : "Auto"})
+                          </button>
+                          <button
+                            onClick={() => setPlayerAspectRatio("9:16")}
+                            className={`px-2 py-0.5 text-[11px] font-bold transition-colors ${playerAspectRatio === "9:16" ? "bg-amber-400 text-ink" : "text-mute hover:text-paper"}`}
+                            title="9:16 Vertical Short / Reel (TikTok, Reels, Shorts)"
+                          >
+                            9:16 Short
+                          </button>
+                          <button
+                            onClick={() => setPlayerAspectRatio("16:9")}
+                            className={`px-2 py-0.5 text-[11px] font-bold transition-colors ${playerAspectRatio === "16:9" ? "bg-amber-400 text-ink" : "text-mute hover:text-paper"}`}
+                            title="16:9 Landscape (YouTube Standard)"
+                          >
+                            16:9
+                          </button>
+                          <button
+                            onClick={() => setPlayerAspectRatio("1:1")}
+                            className={`px-2 py-0.5 text-[11px] font-bold transition-colors ${playerAspectRatio === "1:1" ? "bg-amber-400 text-ink" : "text-mute hover:text-paper"}`}
+                            title="1:1 Square Center Crop"
+                          >
+                            1:1
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setShowNewLinkModal(true)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-ink px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/10 transition-colors shrink-0"
+                      >
+                        <RotateCcw size={13} className="text-amber-400" />
+                        <span>&larr; Put Another Link / Video</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Video Screen Container with Dynamic Frame Aspect Ratio */}
+                  {(() => {
+                    const isVerticalSource = meta?.height && meta?.width ? meta.height > meta.width : false;
+                    const effectiveAspect = playerAspectRatio === "auto" ? (isVerticalSource ? "9:16" : "16:9") : playerAspectRatio;
+
+                    return (
+                      <div className="flex justify-center w-full">
+                        <div
+                          className={`relative rounded-lg bg-black overflow-hidden shadow-2xl border border-line select-none group transition-all duration-300 ${
+                            effectiveAspect === "9:16"
+                              ? "w-[340px] sm:w-[380px] aspect-[9/16]"
+                              : effectiveAspect === "1:1"
+                              ? "w-[480px] aspect-square"
+                              : effectiveAspect === "fit"
+                              ? "w-full max-h-[580px]"
+                              : "w-full aspect-video"
+                          }`}
+                        >
+                          <video
+                            ref={v}
+                            src={apiUrl(`/api/video/${vid}/source`)}
+                            className="h-full w-full object-contain cursor-pointer"
+                            onClick={togglePlay}
+                            onPlay={() => setPlaying(true)}
+                            onPause={() => setPlaying(false)}
+                            onTimeUpdate={(e) => {
+                              const t = e.currentTarget.currentTime;
+                              setCur(t);
+                              if (selOnly.current && t >= sel.current.e) {
+                                e.currentTarget.pause();
+                                selOnly.current = false;
+                              }
+                            }}
+                          />
+
+                          {/* Live Subtitle Overlay burned directly on screen for real-time review */}
+                          {showSubtitlesOverlay && activeChunk && (
+                            <div
+                              className={`pointer-events-none absolute inset-x-0 flex items-center justify-center px-4 ${
+                                effectiveAspect === "9:16" ? "bottom-12 sm:bottom-16" : "bottom-6 sm:bottom-10"
+                              }`}
+                            >
+                              <div
+                                key={`${activeChunk.start}-${activeChunk.text}`}
+                                className={`text-center font-extrabold tracking-wide max-w-[90%] transition-all ${
+                                  subEffect === "popup"
+                                    ? "anim-popup drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "bounce"
+                                    ? "anim-bounce drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "shake"
+                                    ? "anim-shake drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "flip"
+                                    ? "anim-flip drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "spin"
+                                    ? "anim-spin drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "pulse"
+                                    ? "anim-pulse drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "stretch"
+                                    ? "anim-stretch drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "glitch"
+                                    ? "anim-glitch"
+                                    : subEffect === "wave"
+                                    ? "anim-wave drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "neon"
+                                    ? "anim-neon"
+                                    : subEffect === "gradient"
+                                    ? "anim-gradient drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)]"
+                                    : subEffect === "3d"
+                                    ? "drop-shadow-[2px_2px_0_#d97706] drop-shadow-[4px_4px_0_#92400e] drop-shadow-[6px_6px_0_#000]"
+                                    : subEffect === "glow"
+                                    ? "drop-shadow-[0_0_18px_rgba(248,240,174,0.85)]"
+                                    : subEffect === "boxed"
+                                    ? "bg-black/85 px-4 py-1.5 rounded-lg border border-white/20 shadow-2xl"
+                                    : "anim-popup"
+                                }`}
+                                style={{
+                                  fontFamily:
+                                    subFont === "Khand"
+                                      ? "'Khand', sans-serif"
+                                      : subFont === "Impact"
+                                      ? "Impact, Charcoal, sans-serif"
+                                      : subFont === "Devanagari"
+                                      ? "'Noto Sans Devanagari', sans-serif"
+                                      : subFont === "Georgia"
+                                      ? "Georgia, serif"
+                                      : "Arial, sans-serif",
+                                  color: subColor,
+                                  fontSize:
+                                    subSize === "sm"
+                                      ? (effectiveAspect === "9:16" ? "1.05rem" : "1.25rem")
+                                      : subSize === "md"
+                                      ? (effectiveAspect === "9:16" ? "1.28rem" : "1.55rem")
+                                      : subSize === "lg"
+                                      ? (effectiveAspect === "9:16" ? "1.55rem" : "1.95rem")
+                                      : (effectiveAspect === "9:16" ? "1.85rem" : "2.40rem"),
+                                  textShadow:
+                                    subEffect === "boxed" || subEffect === "glitch" || subEffect === "neon"
+                                      ? "none"
+                                      : "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 4px 10px rgba(0,0,0,0.95)",
+                                  lineHeight: 1.15,
+                                }}
+                              >
+                                {(() => {
+                                  let text = activeChunk.text;
+                                  if (subCase === "uppercase") text = text.toUpperCase();
+                                  else if (subCase === "lowercase") text = text.toLowerCase();
+
+                                  if (subEffect === "pop_keyword" || subEffect === "bold_emphasis") {
+                                    const words = text.split(" ");
+                                    if (words.length > 1) {
+                                      const longestIdx = words.reduce((maxI, w, i, arr) => (w.length > arr[maxI].length ? i : maxI), 0);
+                                      return words.map((w, idx) => (
+                                        <span
+                                          key={idx}
+                                          className={`inline-block mx-1 transition-transform ${
+                                            idx === longestIdx
+                                              ? "text-yellow-300 scale-125 font-black drop-shadow-[0_0_14px_rgba(250,204,21,0.9)] underline decoration-amber-400 decoration-2"
+                                              : "opacity-90 scale-95"
+                                          }`}
+                                        >
+                                          {w}
+                                        </span>
+                                      ));
+                                    }
+                                  }
+                                  return text;
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Real-time Subtitle & Typography Effects Studio Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-amber-500/30 bg-ink/90 p-2.5 shadow-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                        <Type size={14} className="text-amber-400" />
+                        <span>Subtitle Live FX:</span>
+                      </span>
+
+                      {/* Toggle Subtitles On/Off */}
+                      <button
+                        onClick={() => setShowSubtitlesOverlay(!showSubtitlesOverlay)}
+                        className={`rounded px-2.5 py-1 text-xs font-bold transition-all ${
+                          showSubtitlesOverlay
+                            ? "bg-amber-400 text-ink shadow-sm"
+                            : "bg-panel text-mute hover:text-paper border border-line"
+                        }`}
+                        title="Toggle live subtitle preview on video player"
+                      >
+                        {showSubtitlesOverlay ? "ON" : "OFF"}
+                      </button>
+
+                      {previewChunks.length === 0 && (
+                        <button
+                          onClick={handleGenerateCaptions}
+                          disabled={transcribing}
+                          className="rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 text-[11px] font-bold text-amber-300 flex items-center gap-1 transition-colors"
+                        >
+                          <Sparkles size={11} />
+                          {transcribing ? "Generating Captions..." : "Generate Captions First"}
+                        </button>
+                      )}
+
+                      {previewChunks.length > 0 && (
+                        <span className="rounded bg-emerald-950/80 px-2 py-0.5 text-[10px] text-emerald-300 border border-emerald-500/30">
+                          {previewChunks.length} cues synced
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      {/* Font Family */}
+                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
+                        <span className="text-mute text-[11px]">Font:</span>
+                        <select
+                          value={subFont}
+                          onChange={(e) => setSubFont(e.target.value)}
+                          className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
+                        >
+                          <option value="Khand">Khand Bold (AP Style)</option>
+                          <option value="Impact">Impact (Viral Big)</option>
+                          <option value="Devanagari">Noto Sans Devanagari</option>
+                          <option value="Arial">Arial Bold</option>
+                          <option value="Georgia">Georgia (Cinematic Serif)</option>
+                        </select>
+                      </div>
+
+                      {/* 45 Advanced Animation Effects categorized */}
+                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
+                        <span className="text-mute text-[11px]">FX / Animation:</span>
+                        <select
+                          value={subEffect}
+                          onChange={(e) => setSubEffect(e.target.value)}
+                          className="bg-transparent text-amber-300 font-bold focus:outline-none text-xs cursor-pointer max-w-[210px] truncate"
+                        >
+                          <optgroup label="✨ Viral Punch & Word FX">
+                            <option value="popup">21. Word Pop (Punch-In)</option>
+                            <option value="pop_keyword">4. Bold Emphasis &amp; Large Keyword</option>
+                            <option value="bounce">25. Word Bounce</option>
+                            <option value="shake">26. Word Shake</option>
+                            <option value="flip">23. Word Flip (3D)</option>
+                            <option value="spin">24. Word Spin</option>
+                            <option value="pulse">28. Word Pulse</option>
+                            <option value="stretch">27. Word Stretch / Squeeze</option>
+                          </optgroup>
+                          <optgroup label="⚡ Advanced Visual & Typography">
+                            <option value="glitch">31. Glitch Typography &amp; RGB Split</option>
+                            <option value="neon">33. Neon Glow Typography</option>
+                            <option value="wave">36. Text Wave &amp; Liquid</option>
+                            <option value="3d">45. 3D Extrusion &amp; Shadow</option>
+                            <option value="gradient">43. Gradient Color Shift</option>
+                            <option value="glow">Soft Warm Diffuse Glow</option>
+                            <option value="boxed">Boxed Dark Contrast Pill</option>
+                          </optgroup>
+                        </select>
+                      </div>
+
+                      {/* Font Color */}
+                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
+                        <span className="text-mute text-[11px]">Color:</span>
+                        <select
+                          value={subColor}
+                          onChange={(e) => setSubColor(e.target.value)}
+                          className="bg-transparent font-bold focus:outline-none text-xs cursor-pointer"
+                          style={{ color: subColor }}
+                        >
+                          <option value="#F8F0AE">Cream Yellow (#F8F0AE)</option>
+                          <option value="#FFFF00">Vibrant Yellow (#FFFF00)</option>
+                          <option value="#00FF66">Neon Green (#00FF66)</option>
+                          <option value="#FFFFFF">Crisp White (#FFFFFF)</option>
+                          <option value="#00FFFF">Cyan Pop (#00FFFF)</option>
+                          <option value="#FF3366">Neon Coral (#FF3366)</option>
+                        </select>
+                      </div>
+
+                      {/* Casing */}
+                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
+                        <span className="text-mute text-[11px]">Case:</span>
+                        <select
+                          value={subCase}
+                          onChange={(e) => setSubCase(e.target.value)}
+                          className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
+                        >
+                          <option value="uppercase">UPPERCASE (Shorts)</option>
+                          <option value="normal">Normal Speech</option>
+                          <option value="lowercase">lowercase</option>
+                        </select>
+                      </div>
+
+                      {/* Size */}
+                      <div className="flex items-center gap-1 bg-panel px-2 py-1 rounded border border-line">
+                        <span className="text-mute text-[11px]">Size:</span>
+                        <select
+                          value={subSize}
+                          onChange={(e) => setSubSize(e.target.value as any)}
+                          className="bg-transparent text-paper font-semibold focus:outline-none text-xs cursor-pointer"
+                        >
+                          <option value="sm">Small</option>
+                          <option value="md">Medium</option>
+                          <option value="lg">Large (Recommended)</option>
+                          <option value="xl">Extra Large</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Player Transport Controls */}
@@ -982,6 +1390,112 @@ export default function App() {
                   <video src={preview} controls className="w-full rounded bg-black" />
                 </div>
               )}
+
+              {/* Captions & Subtitles Section (for Device & Uploaded Videos) */}
+              <div className="border-t border-line pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-paper">
+                    <FileText size={14} className="text-amber-400" />
+                    <span>Captions & Subtitles</span>
+                  </div>
+                  {project?.transcript && (
+                    <span className="rounded bg-emerald-950/80 px-2 py-0.5 text-[10px] text-emerald-300 border border-emerald-500/30">
+                      {project.transcript.segments.length} lines ready
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-mute leading-relaxed">
+                  Generate AI speech-to-text captions directly from your device video or download timestamped subtitles.
+                </p>
+
+                {/* Generate Captions Button */}
+                <button
+                  onClick={handleGenerateCaptions}
+                  disabled={!vid || transcribing}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20 px-3 py-2 text-xs font-bold text-amber-300 disabled:opacity-40 transition-colors shadow-sm"
+                  title="Generate speech-to-text subtitles directly from the video file"
+                >
+                  {transcribing ? <Loader2 size={14} className="animate-spin text-amber-400" /> : <Mic size={14} className="text-amber-400" />}
+                  <span>{transcribing ? "Generating Captions..." : project?.transcript ? "Regenerate AI Captions" : "✨ Generate Captions from Video"}</span>
+                </button>
+
+                {transcribeMsg && (
+                  <p className="text-[11px] text-center text-amber-300/90 font-mono animate-pulse">
+                    {transcribeMsg}
+                  </p>
+                )}
+
+                {/* Download Subtitles / Captions (SRT & TXT) */}
+                {project && (
+                  <div className="space-y-2 pt-1">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-mute">
+                      Download Timeline Captions
+                    </div>
+
+                    {/* Full Video Subtitles */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <a
+                        href={api.transcription.exportUrl(project.id, "srt")}
+                        download
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs font-semibold text-paper hover:bg-ink hover:border-amber-400/50 transition-colors ${!project.transcript ? "opacity-40 pointer-events-none" : ""}`}
+                        title="Download full video subtitles in standard SRT format"
+                      >
+                        <Download size={13} className="text-amber-400" />
+                        <span>SRT (Full)</span>
+                      </a>
+                      <a
+                        href={api.transcription.exportUrl(project.id, "txt")}
+                        download
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1.5 text-xs font-semibold text-paper hover:bg-ink hover:border-amber-400/50 transition-colors ${!project.transcript ? "opacity-40 pointer-events-none" : ""}`}
+                        title="Download full video transcript with timestamps in TXT format"
+                      >
+                        <Download size={13} className="text-amber-400" />
+                        <span>TXT (Timeline)</span>
+                      </a>
+                    </div>
+
+                    {/* Selected Clip Subtitles (Range) */}
+                    {start > 0 || (end > 0 && dur > 0 && end < dur) ? (
+                      <div className="pt-1">
+                        <div className="text-[10px] text-mute mb-1">
+                          Current Selection ({Math.round(start)}s &rarr; {Math.round(end)}s):
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <a
+                            href={api.transcription.exportUrl(project.id, "srt", start, end)}
+                            download
+                            className={`inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-ink px-2 py-1 text-[11px] font-semibold text-amber-300 hover:bg-panel transition-colors ${!project.transcript ? "opacity-40 pointer-events-none" : ""}`}
+                            title="Download SRT only for the selected cut range"
+                          >
+                            <Download size={12} />
+                            <span>SRT (Cut)</span>
+                          </a>
+                          <a
+                            href={api.transcription.exportUrl(project.id, "txt", start, end)}
+                            download
+                            className={`inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-ink px-2 py-1 text-[11px] font-semibold text-amber-300 hover:bg-panel transition-colors ${!project.transcript ? "opacity-40 pointer-events-none" : ""}`}
+                            title="Download TXT with timestamps only for the selected cut range"
+                          >
+                            <Download size={12} />
+                            <span>TXT (Cut)</span>
+                          </a>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* Link to Transcript Tab for Word-by-Word Editing */}
+                    <div className="pt-2 text-center">
+                      <button
+                        onClick={() => setActiveTab("transcript")}
+                        className="text-[11px] text-amber-400/80 hover:text-amber-300 hover:underline inline-flex items-center gap-1"
+                      >
+                        <span>Open Transcript Studio to edit words &rarr;</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </aside>
           </>
         )}
@@ -1003,6 +1517,162 @@ export default function App() {
           }}
           onClose={() => setShowGDriveModal(false)}
         />
+      )}
+
+      {/* Put Another Video Link / Change Video Modal */}
+      {showNewLinkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-line bg-panel p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-line pb-4">
+              <div className="flex items-center gap-2 text-paper font-bold text-base">
+                <Link2 className="text-amber-400" size={20} />
+                <span>Load Another Video / YouTube Link</span>
+              </div>
+              <button
+                onClick={() => setShowNewLinkModal(false)}
+                className="text-mute hover:text-paper rounded-lg p-1 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-mute leading-relaxed">
+              Paste a new YouTube discourse link or pick a video file directly from your computer/device. The editor and timeline will update instantly.
+            </p>
+
+            <div className="space-y-4">
+              {/* Option 1: Device File Upload */}
+              <div className="rounded-xl border border-line bg-ink/60 p-4 space-y-2">
+                <span className="text-xs font-bold text-paper flex items-center gap-1.5">
+                  <Upload size={14} className="text-amber-400" />
+                  <span>Option A: Pick Video from Device / Computer</span>
+                </span>
+                <p className="text-[11px] text-mute">
+                  Select any MP4, MOV, MKV, or WebM video file directly from your storage.
+                </p>
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20 py-2.5 px-3 text-xs font-bold text-amber-300 transition-colors">
+                  <Upload size={15} />
+                  <span>Choose Video File from Device</span>
+                  <input
+                    type="file"
+                    accept="video/*,.mkv,.mts"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setShowNewLinkModal(false);
+                        run("Uploading video from device", () => api.upload(f, setPct));
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+
+              {/* Option 2: YouTube or Video URL */}
+              <div className="rounded-xl border border-line bg-ink/60 p-4 space-y-2">
+                <span className="text-xs font-bold text-paper flex items-center gap-1.5">
+                  <Link2 size={14} className="text-amber-400" />
+                  <span>Option B: Paste YouTube or Video Link</span>
+                </span>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Link2 size={16} className="absolute left-3 top-3 text-mute" />
+                    <input
+                      type="text"
+                      value={newLinkInput}
+                      onChange={(e) => setNewLinkInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && newLinkInput.trim() && !busy) {
+                          const target = newLinkInput.trim();
+                          setShowNewLinkModal(false);
+                          setUrl(target);
+                          setTimeout(() => {
+                            let u = target;
+                            if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
+                            setBusy("Connecting to YouTube…");
+                            api.importUrl(u).then(async (j) => {
+                              while (j.status === "queued" || j.status === "running") {
+                                await new Promise((r) => setTimeout(r, 1200));
+                                j = await api.job(j.id);
+                                setPct(j.progress || 0);
+                                if (j.status === "running") {
+                                  setBusy(`Downloading YouTube video… ${Math.round((j.progress || 0) * 100)}%`);
+                                }
+                              }
+                              if (j.status === "done") {
+                                const result = await api.importJobResult(j.id);
+                                await loaded(result);
+                              }
+                            }).catch((err) => setErr(err.message || "Import failed")).finally(() => {
+                              setBusy("");
+                              setNewLinkInput("");
+                            });
+                          }, 50);
+                        }
+                      }}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      className="w-full rounded-lg border border-line bg-panel py-2 pl-9 pr-3 text-xs text-paper focus:border-amber-400 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!newLinkInput.trim() || busy) return;
+                      const target = newLinkInput.trim();
+                      setShowNewLinkModal(false);
+                      setUrl(target);
+                      setTimeout(() => {
+                        let u = target;
+                        if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
+                        setBusy("Connecting to YouTube…");
+                        api.importUrl(u).then(async (j) => {
+                          while (j.status === "queued" || j.status === "running") {
+                            await new Promise((r) => setTimeout(r, 1200));
+                            j = await api.job(j.id);
+                            setPct(j.progress || 0);
+                            if (j.status === "running") {
+                              setBusy(`Downloading YouTube video… ${Math.round((j.progress || 0) * 100)}%`);
+                            }
+                          }
+                          if (j.status === "done") {
+                            const result = await api.importJobResult(j.id);
+                            await loaded(result);
+                          }
+                        }).catch((err) => setErr(err.message || "Import failed")).finally(() => {
+                          setBusy("");
+                          setNewLinkInput("");
+                        });
+                      }, 50);
+                    }}
+                    disabled={!newLinkInput.trim() || !!busy}
+                    className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold text-ink hover:bg-amber-300 disabled:opacity-40 transition-colors"
+                  >
+                    Import Link
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-between border-t border-line text-xs">
+              <button
+                onClick={() => {
+                  setShowNewLinkModal(false);
+                  setVid(null);
+                  setMeta(null);
+                }}
+                className="text-mute hover:text-paper underline"
+              >
+                Clear current video & return to upload dropzone
+              </button>
+              <button
+                onClick={() => setShowNewLinkModal(false)}
+                className="rounded-lg border border-line bg-panel px-3 py-1.5 text-xs text-mute hover:text-paper"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

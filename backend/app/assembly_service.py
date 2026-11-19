@@ -113,13 +113,21 @@ def assemble_short_video(
             ]
             
             if vf_filters:
-                cmd.extend(["-filter_complex", vf_filters[0], "-map", "[fg]" if "overlay" not in vf_filters[0] else "0:v:0"])
+                filter_str = vf_filters[0]
+                # Ensure input pad is explicit if using split
+                if filter_str.startswith("split"):
+                    filter_str = f"[0:v]{filter_str}"
+                out_pad = "[outv]" if "[outv]" in filter_str else ("[fg]" if "overlay" not in filter_str else "0:v:0")
+                if "[bg][fg]overlay=(W-w)/2:(H-h)/2" in filter_str and "[outv]" not in filter_str:
+                    filter_str = filter_str.replace("[bg][fg]overlay=(W-w)/2:(H-h)/2", "[bg][fg]overlay=(W-w)/2:(H-h)/2[outv]")
+                    out_pad = "[outv]"
+                cmd.extend(["-filter_complex", filter_str, "-map", out_pad, "-map", "0:a:0?"])
             else:
-                cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"])
+                cmd.extend(["-map", "0:v:0", "-map", "0:a:0?"])
                 
             cmd.extend([
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
                 str(part_path)
             ])
             
@@ -178,10 +186,9 @@ def assemble_short_video(
                 final_cmd.extend(["-map", "[aout]"])
             else:
                 final_cmd.extend(["-map", "0:a:0?"])
+            final_cmd.extend(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-b:v", "6M", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(final_out)])
         else:
-            final_cmd.extend(["-c", "copy"])
-
-        final_cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-movflags", "+faststart", str(final_out)])
+            final_cmd.extend(["-c", "copy", "-movflags", "+faststart", str(final_out)])
         subprocess.run(final_cmd, check=True)
 
         file_size = final_out.stat().st_size

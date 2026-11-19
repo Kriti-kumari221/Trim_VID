@@ -62,6 +62,7 @@ export type ScriptData = {
 
 export type MusicTrack = {
   id: string; project_id?: string; name: string; mood: string; genre: string; duration: number;
+  tempo?: string; energy?: string; acousticness?: string; description?: string;
   url: string; is_preset: boolean; analysis_reason?: string; detected_mood?: string;
 };
 
@@ -199,7 +200,20 @@ export const api = {
     pollTask: (taskId: string) => fetch(apiUrl(`/api/studio-tasks/${taskId}`)).then(j<{ id: string; type: string; status: string; progress: number; error: string | null }>),
     taskResult: (taskId: string) => fetch(apiUrl(`/api/studio-tasks/${taskId}/result`)).then(j<TranscriptData>),
     update: (projectId: string, segments: TranscriptSegment[]) => put(`/api/projects/${projectId}/transcript`, { segments }).then(j<TranscriptData>),
-    exportUrl: (projectId: string, format = "srt") => apiUrl(`/api/projects/${projectId}/transcript/export?format=${format}`),
+    importFile: (projectId: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return fetch(apiUrl(`/api/projects/${projectId}/transcript/import-file`), { method: "POST", body: fd }).then(j<TranscriptData>);
+    },
+    chunks: (projectId: string, words_per_cue = 3) =>
+      fetch(apiUrl(`/api/projects/${projectId}/transcript/chunks?words_per_cue=${words_per_cue}`)).then(j<Array<{ start: number; end: number; speaker: string; text: string }>>),
+    exportUrl: (projectId: string, format = "srt", start?: number, end?: number) => {
+      let u = `/api/projects/${projectId}/transcript/export?format=${format}`;
+      if (start !== undefined && end !== undefined) {
+        u += `&start=${start}&end=${end}`;
+      }
+      return apiUrl(u);
+    },
   },
 
   // Content Analysis & AI Scripts
@@ -213,6 +227,8 @@ export const api = {
       api_key?: string,
       provider = "gemini"
     ) => post(`/api/projects/${projectId}/scripts/generate`, { topic_id, duration_target, style, api_key, provider }).then(j<ScriptData>),
+    importCustomScript: (projectId: string, scriptText: string) =>
+      post(`/api/projects/${projectId}/scripts/import-custom`, { script_text: scriptText }).then(j<ScriptData>),
     mapToClips: (projectId: string, scriptId: string, folder_name = "Script Clips") =>
       post(`/api/projects/${projectId}/scripts/${scriptId}/map-to-clips`, { folder_name }).then(j<{ created_clips: ProjectClip[] }>),
   },
@@ -222,8 +238,11 @@ export const api = {
     list: (projectId?: string) => fetch(apiUrl(`/api/music${projectId ? `?project_id=${projectId}` : ""}`)).then(j<MusicTrack[]>),
     generate: (mood: string, genre = "cinematic", duration = 60, projectId?: string) =>
       post(`/api/music/generate${projectId ? `?project_id=${projectId}` : ""}`, { mood, genre, duration }).then(j<MusicTrack>),
-    composeFromScript: (projectId: string, scriptId?: string, apiKey?: string) =>
-      post(`/api/projects/${projectId}/music/detect-and-compose`, { script_id: scriptId, api_key: apiKey }).then(j<MusicTrack>),
+    composeFromScript: (projectId: string, scriptId?: string, scriptText?: string, apiKey?: string) =>
+      post(`/api/projects/${projectId}/music/detect-and-compose`, { script_id: scriptId, script_text: scriptText, api_key: apiKey }).then(j<MusicTrack>),
+    auditTrack: (trackId: string, data: { name?: string; mood?: string; genre?: string; tempo?: number; energy?: string; re_render?: boolean }) =>
+      put(`/api/music/${trackId}/audit`, data).then(j<MusicTrack>),
+    deleteTrack: (trackId: string) => del(`/api/music/${trackId}`).then(j<{ deleted: boolean; track_id: string }>),
   },
 
   // Subtitles
@@ -282,5 +301,7 @@ export const api = {
     proceedToAI: (jobId: string, customTranscript?: any[]) => post(`/api/auto-shorts/jobs/${jobId}/proceed-ai`, { custom_transcript: customTranscript }).then(j<any>),
     renderApproved: (jobId: string, clips: any[], fontFile?: string, casing = "uppercase", animationEffect = "scale_pop") =>
       post(`/api/auto-shorts/jobs/${jobId}/render`, { clips, font_file: fontFile, casing, animation_effect: animationEffect }).then(j<any>),
+    parseScript: (scriptText: string) => post("/api/auto-shorts/parse-script", { script_text: scriptText }).then(j<{ overall_range: [number, number] | null; scenes: any[]; total_scenes: number }>),
+    parseTranscript: (rawText: string) => post("/api/auto-shorts/parse-transcript", { raw_text: rawText }).then(j<{ segments: any[]; total_segments: number }>),
   }
 };

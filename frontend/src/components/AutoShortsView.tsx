@@ -37,6 +37,12 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
   const [clips, setClips] = useState<any[]>([]);
   const [batchMode, setBatchMode] = useState(false);
   const [batchUrls, setBatchUrls] = useState("");
+  const [pastedCustomScript, setPastedCustomScript] = useState("");
+  const [showScriptModal, setShowScriptModal] = useState(false);
+  const [pastedRawTranscript, setPastedRawTranscript] = useState("");
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [editingSubtitleClipIndex, setEditingSubtitleClipIndex] = useState<number | null>(null);
+  const [subtitleEditText, setSubtitleEditText] = useState<string>("");
 
   // Load templates & fonts on mount
   useEffect(() => {
@@ -138,6 +144,72 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
     setTranscriptSegments(updated);
   };
 
+  const handleApplyCustomScript = async () => {
+    if (!pastedCustomScript.trim()) return;
+    setLoading(true);
+    try {
+      const res = await api.autoShorts.parseScript(pastedCustomScript);
+      if (res.overall_range && res.scenes.length > 0) {
+        // Option 1: Map scenes directly as project clips
+        const parsedClips = res.scenes.map((sc, i) => ({
+          id: `script_scene_${sc.scene_num}_${Date.now()}`,
+          start: sc.original_start,
+          end: sc.original_end,
+          hook_title: sc.on_screen_text || `Scene #${sc.scene_num}`,
+          virality_score: 95,
+          reason: sc.role || "Structured Reel Scene",
+          summary: sc.dialogue,
+          script_content: sc.dialogue,
+          accepted: true,
+          crop_rect: {}
+        }));
+        
+        // Also add full continuous video clip covering overall range
+        const continuousShort = {
+          id: `full_continuous_${Date.now()}`,
+          start: res.overall_range[0],
+          end: res.overall_range[1],
+          hook_title: `Full Reel: ${Math.round(res.overall_range[0]/60)}m - ${Math.round(res.overall_range[1]/60)}m`,
+          virality_score: 98,
+          reason: "Complete Continuous Short/Reel as scripted",
+          summary: "Continuous sequence from custom script",
+          script_content: pastedCustomScript,
+          accepted: true,
+          crop_rect: {}
+        };
+        
+        setClips([continuousShort, ...parsedClips]);
+        setShowScriptModal(false);
+        setCurrentViewTab("clips");
+      } else {
+        alert("Could not detect timestamped scenes in script. Please check formatting.");
+      }
+    } catch (e: any) {
+      alert("Failed to parse script: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplyRawTranscript = async () => {
+    if (!pastedRawTranscript.trim()) return;
+    setLoading(true);
+    try {
+      const res = await api.autoShorts.parseTranscript(pastedRawTranscript);
+      if (res.segments.length > 0) {
+        setTranscriptSegments(res.segments);
+        setShowTranscriptModal(false);
+        setCurrentViewTab("transcript");
+      } else {
+        alert("No timestamped lines detected. Expected format: '00:00:00.000 Text...'");
+      }
+    } catch (e: any) {
+      alert("Failed to parse transcript: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAddManualClip = () => {
     const newClip = {
       id: "manual_" + Date.now(),
@@ -178,50 +250,72 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
         </div>
 
         {/* Step Navigation Tabs if Job is Active */}
-        {job && (
-          <div className="flex items-center gap-1.5 bg-panel border border-line p-1 rounded-lg">
+        <div className="flex items-center gap-2">
+          {job && (
             <button
-              onClick={() => setCurrentViewTab("pipeline")}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 ${
-                currentViewTab === "pipeline" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
-              }`}
+              onClick={() => {
+                if (confirm("Go back and start a new YouTube video / link?")) {
+                  setJobId(null);
+                  setJob(null);
+                  setClips([]);
+                  setTranscriptSegments([]);
+                  setUrl("");
+                  setCurrentViewTab("pipeline");
+                }
+              }}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-line bg-panel hover:bg-canvas text-paper flex items-center gap-1.5 shadow-sm transition-all"
+              title="Enter a new YouTube URL or change video"
             >
-              <Clock size={13} />
-              Progress
+              <RotateCcw size={13} className="text-amber-400" />
+              <span>&larr; New Video Link</span>
             </button>
-            <button
-              onClick={() => setCurrentViewTab("transcript")}
-              disabled={!job.transcript || job.transcript.length === 0}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 disabled:opacity-30 ${
-                currentViewTab === "transcript" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
-              }`}
-            >
-              <FileText size={13} />
-              Transcript & Script ({transcriptSegments.length})
-            </button>
-            <button
-              onClick={() => setCurrentViewTab("clips")}
-              disabled={!job.clips || job.clips.length === 0}
-              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 disabled:opacity-30 ${
-                currentViewTab === "clips" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
-              }`}
-            >
-              <Sliders size={13} />
-              AI Clips ({clips.length})
-            </button>
-            {job.renders && job.renders.length > 0 && (
+          )}
+
+          {job && (
+            <div className="flex items-center gap-1.5 bg-panel border border-line p-1 rounded-lg">
               <button
-                onClick={() => setCurrentViewTab("renders")}
+                onClick={() => setCurrentViewTab("pipeline")}
                 className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 ${
-                  currentViewTab === "renders" ? "bg-emerald-500 text-ink shadow-sm" : "text-emerald-400 hover:text-emerald-300"
+                  currentViewTab === "pipeline" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
                 }`}
               >
-                <CheckCircle2 size={13} />
-                Exports ({job.renders.length})
+                <Clock size={13} />
+                Progress
               </button>
-            )}
-          </div>
-        )}
+              <button
+                onClick={() => setCurrentViewTab("transcript")}
+                disabled={!job.transcript || job.transcript.length === 0}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 disabled:opacity-30 ${
+                  currentViewTab === "transcript" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
+                }`}
+              >
+                <FileText size={13} />
+                Transcript & Script ({transcriptSegments.length})
+              </button>
+              <button
+                onClick={() => setCurrentViewTab("clips")}
+                disabled={!job.clips || job.clips.length === 0}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 disabled:opacity-30 ${
+                  currentViewTab === "clips" ? "bg-amber-400 text-ink shadow-sm" : "text-mute hover:text-paper"
+                }`}
+              >
+                <Sliders size={13} />
+                AI Clips ({clips.length})
+              </button>
+              {job.renders && job.renders.length > 0 && (
+                <button
+                  onClick={() => setCurrentViewTab("renders")}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 ${
+                    currentViewTab === "renders" ? "bg-emerald-500 text-ink shadow-sm" : "text-emerald-400 hover:text-emerald-300"
+                  }`}
+                >
+                  <CheckCircle2 size={13} />
+                  Exports ({job.renders.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -244,7 +338,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=..."
-                className="w-full rounded-lg border border-line bg-canvas px-3.5 py-2.5 text-sm text-paper focus:outline-none focus:border-amber-400"
+                style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                className="w-full rounded-lg border-2 border-line/80 px-3.5 py-2.5 text-sm font-medium focus:outline-none focus:border-amber-400 placeholder:text-gray-500 shadow-inner"
               />
             </div>
 
@@ -256,7 +351,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 <select
                   value={templateId}
                   onChange={(e) => setTemplateId(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                  style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                  className="w-full rounded-lg border-2 border-line/80 px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 >
                   <option value="acharya_prashant_classic">Acharya Prashant Classic (1080x1920)</option>
                   <option value="acharya_prashant_split">Acharya Prashant Dual Split (Multi-Speaker)</option>
@@ -273,7 +369,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 <select
                   value={selectedFont}
                   onChange={(e) => setSelectedFont(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                  style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                  className="w-full rounded-lg border-2 border-line/80 px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 >
                   <option value="Khand-Bold.ttf">Khand Bold (Hindi + Latin)</option>
                   <option value="NotoSansDevanagari-Bold.ttf">Noto Sans Devanagari</option>
@@ -289,7 +386,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 <select
                   value={subtitleCasing}
                   onChange={(e) => setSubtitleCasing(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                  style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                  className="w-full rounded-lg border-2 border-line/80 px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 >
                   <option value="uppercase">UPPERCASE (Standard)</option>
                   <option value="lowercase">lowercase</option>
@@ -304,7 +402,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 <select
                   value={animationEffect}
                   onChange={(e) => setAnimationEffect(e.target.value)}
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                  style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                  className="w-full rounded-lg border-2 border-line/80 px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 >
                   <option value="scale_pop">Scale Pop (Punch-in Zoom)</option>
                   <option value="glow_punch">Glow Punch & Bold</option>
@@ -319,7 +418,8 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 <select
                   value={numClips}
                   onChange={(e) => setNumClips(parseInt(e.target.value))}
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-paper focus:outline-none"
+                  style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                  className="w-full rounded-lg border-2 border-line/80 px-3 py-2 text-xs focus:outline-none focus:border-amber-400"
                 >
                   <option value={3}>3 Viral Clips (30-60s)</option>
                   <option value={5}>5 Viral Clips (30-75s)</option>
@@ -482,24 +582,33 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
       {/* Interactive Transcript & Script Editor View */}
       {job && currentViewTab === "transcript" && (
         <div className="bg-panel border border-line rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between border-b border-line pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-line pb-3 gap-3">
             <div>
               <h3 className="text-sm font-bold text-paper flex items-center gap-2">
                 <FileText size={16} className="text-amber-400" />
                 Discourse Transcript & Spoken Script
               </h3>
               <p className="text-xs text-mute mt-0.5">
-                Review and edit any word or sentence before passing to AI. Manual corrections guarantee zero spelling mistakes in subtitles.
+                Review and edit any word or sentence before passing to AI, or paste your Tactiq / YouTube transcript directly.
               </p>
             </div>
-            <button
-              onClick={handleProceedToAI}
-              disabled={loading}
-              className="rounded-lg bg-amber-400 hover:bg-amber-300 text-ink font-bold px-4 py-2 text-xs flex items-center gap-1.5 shadow-md shadow-amber-400/20"
-            >
-              Save & Proceed to AI Clips
-              <ArrowRight size={14} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTranscriptModal(true)}
+                className="rounded-lg border border-line bg-canvas hover:bg-line text-paper font-semibold px-3 py-1.5 text-xs flex items-center gap-1.5"
+              >
+                <Plus size={13} />
+                Paste Custom Transcript
+              </button>
+              <button
+                onClick={handleProceedToAI}
+                disabled={loading}
+                className="rounded-lg bg-amber-400 hover:bg-amber-300 text-ink font-bold px-4 py-2 text-xs flex items-center gap-1.5 shadow-md shadow-amber-400/20"
+              >
+                Save & Proceed to AI Clips
+                <ArrowRight size={14} />
+              </button>
+            </div>
           </div>
 
           <div className="max-h-[460px] overflow-y-auto space-y-2 pr-2">
@@ -578,12 +687,20 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                   onChange={(e) => setAnimationEffect(e.target.value)}
                   className="bg-transparent text-paper font-bold focus:outline-none"
                 >
-                  <option value="scale_pop">Scale Pop</option>
-                  <option value="glow_punch">Glow Punch</option>
-                  <option value="clean">Clean</option>
+                  <option value="scale_pop">Scale Pop (Punch-in)</option>
+                  <option value="word_highlight">Pop &amp; Large Keyword</option>
+                  <option value="glow_punch">Warm Glow Punch</option>
+                  <option value="clean">Clean Minimal</option>
                 </select>
               </div>
 
+              <button
+                onClick={() => setShowScriptModal(true)}
+                className="rounded-lg border border-amber-400/40 bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 font-semibold px-3 py-1.5 text-xs flex items-center gap-1.5"
+              >
+                <FileText size={13} />
+                Paste Custom Script / Reel
+              </button>
               <button
                 onClick={handleAddManualClip}
                 className="rounded-lg border border-line bg-panel hover:bg-canvas text-xs font-semibold px-3 py-1.5 text-paper flex items-center gap-1"
@@ -628,13 +745,34 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                       value={clip.hook_title || ""}
                       onChange={(e) => handleUpdateClip(idx, "hook_title", e.target.value)}
                       placeholder="Catchy Hook Title"
-                      className="w-full bg-canvas border border-line rounded px-2.5 py-1 text-sm font-bold text-paper focus:outline-none focus:border-amber-400"
+                      style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                      className="w-full border border-line rounded px-3 py-1.5 text-sm font-bold focus:outline-none focus:border-amber-400 placeholder:text-mute/40"
                     />
 
                     {clip.reason && (
                       <p className="text-[11px] text-mute line-clamp-2 italic">
                         "{clip.reason}"
                       </p>
+                    )}
+
+                    {clip.summary && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-mute font-semibold">
+                          <span>Subtitles / Script:</span>
+                          <button
+                            onClick={() => {
+                              setEditingSubtitleClipIndex(idx);
+                              setSubtitleEditText(clip.script_content || clip.summary || "");
+                            }}
+                            className="text-amber-400 hover:underline flex items-center gap-1"
+                          >
+                            <Edit3 size={11} /> Edit Subtitles (SRT)
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-paper/90 bg-black/40 p-2 rounded border border-line/40 line-clamp-3 font-sans">
+                          {clip.script_content || clip.summary}
+                        </p>
+                      </div>
                     )}
                   </div>
 
@@ -665,23 +803,61 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 {/* Timing Handles */}
                 <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-line/60 text-xs">
                   <div>
-                    <label className="text-[10px] text-mute uppercase font-bold block mb-1">Start Time (seconds)</label>
+                    <label className="text-[10px] text-mute uppercase font-bold block mb-1">
+                      Start Time ({fmtTime(clip.start || 0)})
+                    </label>
                     <input
-                      type="number"
-                      step="0.5"
-                      value={clip.start}
-                      onChange={(e) => handleUpdateClip(idx, "start", parseFloat(e.target.value) || 0)}
-                      className="w-full bg-canvas border border-line rounded px-2 py-1 text-xs text-paper focus:outline-none"
+                      type="text"
+                      value={clip.start_str !== undefined ? clip.start_str : clip.start}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        let sec = parseFloat(val);
+                        if (val.includes(":")) {
+                          const pts = val.split(":").map(Number);
+                          sec = pts.length === 2 ? pts[0]*60 + pts[1] : pts.length === 3 ? pts[0]*3600 + pts[1]*60 + pts[2] : sec;
+                        }
+                        const updated = [...clips];
+                        updated[idx].start_str = val;
+                        if (!isNaN(sec)) updated[idx].start = sec;
+                        setClips(updated);
+                      }}
+                      onBlur={() => {
+                        const updated = [...clips];
+                        delete updated[idx].start_str;
+                        setClips(updated);
+                      }}
+                      style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                      className="w-full border border-line rounded px-2 py-1 text-xs font-mono focus:border-amber-400 focus:outline-none"
+                      placeholder="e.g. 54:00 or 3240"
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] text-mute uppercase font-bold block mb-1">End Time (seconds)</label>
+                    <label className="text-[10px] text-mute uppercase font-bold block mb-1">
+                      End Time ({fmtTime(clip.end || 0)})
+                    </label>
                     <input
-                      type="number"
-                      step="0.5"
-                      value={clip.end}
-                      onChange={(e) => handleUpdateClip(idx, "end", parseFloat(e.target.value) || 0)}
-                      className="w-full bg-canvas border border-line rounded px-2 py-1 text-xs text-paper focus:outline-none"
+                      type="text"
+                      value={clip.end_str !== undefined ? clip.end_str : clip.end}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        let sec = parseFloat(val);
+                        if (val.includes(":")) {
+                          const pts = val.split(":").map(Number);
+                          sec = pts.length === 2 ? pts[0]*60 + pts[1] : pts.length === 3 ? pts[0]*3600 + pts[1]*60 + pts[2] : sec;
+                        }
+                        const updated = [...clips];
+                        updated[idx].end_str = val;
+                        if (!isNaN(sec)) updated[idx].end = sec;
+                        setClips(updated);
+                      }}
+                      onBlur={() => {
+                        const updated = [...clips];
+                        delete updated[idx].end_str;
+                        setClips(updated);
+                      }}
+                      style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+                      className="w-full border border-line rounded px-2 py-1 text-xs font-mono focus:border-amber-400 focus:outline-none"
+                      placeholder="e.g. 57:01 or 3421"
                     />
                   </div>
                 </div>
@@ -730,6 +906,168 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 </a>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Custom Script / Reel */}
+      {showScriptModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-panel border border-line rounded-xl max-w-2xl w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="text-amber-400" size={18} />
+                <h3 className="text-base font-bold text-paper">Paste Custom Reel / Scene Script</h3>
+              </div>
+              <button
+                onClick={() => setShowScriptModal(false)}
+                className="text-mute hover:text-paper"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-mute">
+              Paste your hand-crafted Short script with scene timestamps (e.g. <code>[Opening — 00:54:00]</code> or <code>00:54:00 – 00:57:01</code>). ClipTrim will map the scenes and generate a <strong>Continuous Full Short</strong>.
+            </p>
+
+            <textarea
+              rows={12}
+              value={pastedCustomScript}
+              onChange={(e) => setPastedCustomScript(e.target.value)}
+              placeholder="Paste script here... Example:
+00:54:00 – 00:57:01
+
+[Opening — 00:54:00]
+Acharya Prashant:
+“That is why I am first of all contesting the popular meaning of education...”"
+              style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+              className="w-full border-2 border-line/80 rounded-lg p-3 text-xs font-mono focus:outline-none focus:border-amber-400 placeholder-mute/60"
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowScriptModal(false)}
+                className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-mute hover:text-paper"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApplyCustomScript}
+                disabled={loading || !pastedCustomScript.trim()}
+                className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-ink text-xs font-bold flex items-center gap-1.5 shadow"
+              >
+                <Check size={14} />
+                Parse & Add to Clips
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Raw Tactiq / YouTube Transcript */}
+      {showTranscriptModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-panel border border-line rounded-xl max-w-2xl w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="text-amber-400" size={18} />
+                <h3 className="text-base font-bold text-paper">Paste Full YouTube / Tactiq Transcript</h3>
+              </div>
+              <button
+                onClick={() => setShowTranscriptModal(false)}
+                className="text-mute hover:text-paper"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-mute">
+              Paste timestamped lines exported from Tactiq.io or YouTube (e.g. <code>00:00:00.000 We work on democracy...</code>).
+            </p>
+
+            <textarea
+              rows={12}
+              value={pastedRawTranscript}
+              onChange={(e) => setPastedRawTranscript(e.target.value)}
+              placeholder="Paste raw transcript with timestamps here...
+00:00:00.000 We work on democracy and you talk about
+00:00:03.000 Vedanta and Advait. Can you tell us if
+00:00:06.560 you see any link between the two..."
+              style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+              className="w-full border-2 border-line/80 rounded-lg p-3 text-xs font-mono focus:outline-none focus:border-amber-400 placeholder-mute/60"
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowTranscriptModal(false)}
+                className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-mute hover:text-paper"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApplyRawTranscript}
+                disabled={loading || !pastedRawTranscript.trim()}
+                className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-ink text-xs font-bold flex items-center gap-1.5 shadow"
+              >
+                <Check size={14} />
+                Import Transcript Segments
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal for Editing Clip Subtitles / SRT */}
+      {editingSubtitleClipIndex !== null && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-panel border border-line rounded-xl max-w-xl w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 className="text-amber-400" size={18} />
+                <h3 className="text-base font-bold text-paper">Review & Edit Clip Subtitles</h3>
+              </div>
+              <button
+                onClick={() => setEditingSubtitleClipIndex(null)}
+                className="text-mute hover:text-paper"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-mute">
+              Adjust words or timing text for this Short. ClipTrim will burn your exact edited wording as animated glowing subtitles!
+            </p>
+
+            <textarea
+              rows={8}
+              value={subtitleEditText}
+              onChange={(e) => setSubtitleEditText(e.target.value)}
+              style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+              className="w-full border-2 border-line/80 rounded-lg p-3 text-xs font-mono focus:outline-none focus:border-amber-400"
+              placeholder="Enter spoken words for this Short..."
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setEditingSubtitleClipIndex(null)}
+                className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-mute hover:text-paper"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const updated = [...clips];
+                  updated[editingSubtitleClipIndex].script_content = subtitleEditText;
+                  updated[editingSubtitleClipIndex].summary = subtitleEditText;
+                  setClips(updated);
+                  setEditingSubtitleClipIndex(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-ink text-xs font-bold flex items-center gap-1.5 shadow"
+              >
+                <Check size={14} />
+                Save Subtitle Changes
+              </button>
+            </div>
           </div>
         </div>
       )}

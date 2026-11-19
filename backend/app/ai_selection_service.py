@@ -50,12 +50,74 @@ def parse_raw_transcript_text(raw_text: str) -> List[Dict[str, Any]]:
 
 def parse_custom_script_into_scenes(script_text: str) -> Tuple[Optional[Tuple[float, float]], List[Dict[str, Any]]]:
     """
-    Parses structured user scripts with sections e.g.:
-    00:54:00 – 00:57:01
-    [Opening — 00:54:00]
-    "That is why I am first of all contesting..."
-    [The main concept — 00:54:26]
+    Parses structured user scripts with sections in various formats:
+    Format A (Bracketed section):
+      00:54:00 – 00:57:01
+      [Opening — 00:54:00]
+      "That is why I am first of all contesting..."
+      [The main concept — 00:54:26]
+    Format B (Table / Tabular scene cut):
+      #1  0.0s - 24.0s  03:37 - 03:40
+      Speaker tight close-up; dynamic punch-in zoom  "counted as a"  COUNTED
+      #2  24.0s - 48.0s  04:18 - 04:25
+    Format C (Numbered timestamp lines):
+      1. 00:54:00 - 00:54:30 Opening Hook
+         Dialogue text...
     """
+    script_text = script_text.strip()
+    if not script_text:
+        return None, []
+
+    # ----------------- Format B: Table / Tabular Scene Breakdown -----------------
+    # Look for patterns like "#1 0.0s - 24.0s 03:37 - 03:40" or "1 03:37 - 03:40"
+    table_pattern = re.compile(
+        r'(?:#(?P<num>\d+))?\s*(?:(?P<rel_s>[\d\.]+s?)\s*[-–—to]+\s*(?P<rel_e>[\d\.]+s?))?\s*(?P<src_s>\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—to]+\s*(?P<src_e>\d{1,2}:\d{2}(?::\d{2})?)(?P<rest>.*?)(?=(?:#\d|\n\s*(?:#?\d+\s+)?\d{1,2}:\d{2}|$))',
+        re.DOTALL
+    )
+    table_matches = list(table_pattern.finditer(script_text))
+    if len(table_matches) >= 2:
+        scenes = []
+        for i, m in enumerate(table_matches):
+            src_start = parse_time_str(m.group('src_s'))
+            src_end = parse_time_str(m.group('src_e'))
+            rest = m.group('rest').strip()
+            
+            q_match = re.search(r'[\"“](.*?)[\"”]', rest)
+            dialogue = q_match.group(1).strip() if q_match else ''
+            
+            on_screen = ''
+            if q_match:
+                after_q = rest[q_match.end():].strip()
+                words = [w.strip('.,;:"!?') for w in after_q.split() if w.isupper() or len(w) > 2]
+                on_screen = ' '.join(words[:4])
+            
+            visual = rest.split('\"')[0].split('“')[0].strip() if q_match else rest
+            visual = re.sub(r'[\t\r\n]+', ' ', visual).strip()
+            if not on_screen and dialogue:
+                on_screen = ' '.join(dialogue.split()[:4]).upper()
+            
+            dur = max(1.0, round(src_end - src_start, 1))
+            sc_num = int(m.group('num')) if m.group('num') else (i + 1)
+            role_name = f"Scene #{sc_num}"
+            if visual and len(visual) < 30:
+                role_name = visual
+
+            scenes.append({
+                "scene_num": sc_num,
+                "role": role_name,
+                "script_timeline": f"{src_start:.1f}s - {src_end:.1f}s",
+                "duration": dur,
+                "original_start": round(src_start, 2),
+                "original_end": round(src_end, 2),
+                "dialogue": dialogue or visual,
+                "visual_description": visual or f"Speaker tight cut #{sc_num}",
+                "on_screen_text": on_screen or f"SCENE #{sc_num}",
+                "approved": True
+            })
+        if scenes:
+            return (scenes[0]["original_start"], scenes[-1]["original_end"]), scenes
+
+    # ----------------- Format A: Bracketed / Sectioned Script -----------------
     range_match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—to]+\s*(\d{1,2}:\d{2}(?::\d{2})?)", script_text)
     overall_range = None
     if range_match:
@@ -77,6 +139,10 @@ def parse_custom_script_into_scenes(script_text: str) -> Tuple[Optional[Tuple[fl
         clean_lines = [l.strip().strip('“"”') for l in section_text.splitlines() if l.strip() and not l.strip().endswith(":")]
         dialogue = " ".join(clean_lines)
         
+        # If section is empty and marked as End/Outro, don't generate a trailing 0-duration dummy scene
+        if not dialogue and role.lower() in ("end", "outro", "finish", "conclusion"):
+            continue
+
         if t_end is None:
             if i+1 < len(matches):
                 t_end = parse_time_str(matches[i+1].group(2))
@@ -145,13 +211,19 @@ def select_viral_clips_from_transcript(
 
     formatted_transcript = "\n".join(lines[:350])
 
-    prompt = f"""Analyze this discourse transcript and select the {num_clips} most viral, insightful Short/Reel clips.
+    # RAG: Retrieve matching philosophical framework insights for this discourse
+    from . import rag_service
+    retrieved_context = rag_service.retrieve_relevant_guidelines(formatted_transcript, max_chunks=3)
+    rag_prompt_section = f"\nEDITORIAL PHILOSOPHY & KNOWLEDGE BASE GUIDELINES (ACHARYA PRASHANT FRAMEWORK):\n{retrieved_context}\n" if retrieved_context else ""
 
+    prompt = f"""Analyze this discourse transcript and select the {num_clips} most viral, insightful Short/Reel clips based on Acharya Prashant's philosophical framework.
+{rag_prompt_section}
 Requirements:
 - Number of clips: {num_clips}
 - Duration: between {target_min_s}s and {target_max_s}s
-- Must have an irresistible opening hook
-- Keep speaker's original language (Hindi/English)
+- Prioritize: The 'Disturbance Hook' (the mirror), counter-intuitive insights (Vidya vs Avidya, Horizontal vs Vertical, Ego identification vs Freedom, True Price of Change).
+- Every clip MUST begin with an irresistible scroll-stopping hook statement or question.
+- Keep speaker's original language (Hindi/English).
 
 Return a JSON array of objects with the schema:
 [
@@ -160,7 +232,7 @@ Return a JSON array of objects with the schema:
     "end": float,
     "hook_title": "Catchy punchy title (Hindi/English)",
     "virality_score": int (80-99),
-    "reason": "Why this specific hook & insight stops the scroll",
+    "reason": "Why this specific hook & insight stops the scroll based on the framework",
     "summary": "Key thesis/point conveyed in this clip",
     "script_content": "The exact spoken discourse snippet for this short"
   }}

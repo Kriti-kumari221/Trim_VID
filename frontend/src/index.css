@@ -2,3 +2,88 @@
 body { @apply bg-ink text-paper font-sans antialiased; font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid #f5b942; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Advanced Typography Animations & FX */
+@keyframes scaleIn {
+  0% { transform: scale(0.75); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes wordBounce {
+  0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-16px) scale(1.1); }
+  60% { transform: translateY(-7px) scale(1.05); }
+}
+
+@keyframes wordShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px) rotate(-2deg); }
+  40% { transform: translateX(6px) rotate(2deg); }
+  60% { transform: translateX(-4px) rotate(-1deg); }
+  80% { transform: translateX(4px) rotate(1deg); }
+}
+
+@keyframes wordFlip {
+  0% { transform: perspective(400px) rotateX(90deg); opacity: 0; }
+  40% { transform: perspective(400px) rotateX(-15deg); }
+  70% { transform: perspective(400px) rotateX(10deg); }
+  100% { transform: perspective(400px) rotateX(0deg); opacity: 1; }
+}
+
+@keyframes wordSpin {
+  0% { transform: rotate(-180deg) scale(0.4); opacity: 0; }
+  100% { transform: rotate(0deg) scale(1); opacity: 1; }
+}
+
+@keyframes wordPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+
+@keyframes wordStretch {
+  0% { transform: scaleX(0.4) scaleY(1.4); }
+  50% { transform: scaleX(1.3) scaleY(0.8); }
+  100% { transform: scaleX(1) scaleY(1); }
+}
+
+@keyframes rgbGlitch {
+  0% { text-shadow: 2px 2px #ff0055, -2px -2px #00ffff; }
+  25% { text-shadow: -3px -2px #ff0055, 3px 2px #00ffff; }
+  50% { text-shadow: 2px -3px #ff0055, -2px 3px #00ffff; }
+  75% { text-shadow: -2px 2px #ff0055, 2px -2px #00ffff; }
+  100% { text-shadow: 2px 2px #ff0055, -2px -2px #00ffff; }
+}
+
+@keyframes textWavy {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes neonFlicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    text-shadow: 0 0 5px #fff, 0 0 10px #fff, 0 0 20px #00ff66, 0 0 30px #00ff66, 0 0 40px #00ff66;
+  }
+  20%, 24%, 55% {
+    text-shadow: none;
+  }
+}
+
+@keyframes gradientShift {
+  0% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(180deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+
+.anim-popup { animation: scaleIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-bounce { animation: wordBounce 0.6s ease both; }
+.anim-shake { animation: wordShake 0.4s ease both; }
+.anim-flip { animation: wordFlip 0.45s ease both; }
+.anim-spin { animation: wordSpin 0.35s ease-out both; }
+.anim-pulse { animation: wordPulse 0.5s ease-in-out infinite; }
+.anim-stretch { animation: wordStretch 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-glitch { animation: rgbGlitch 0.25s infinite; }
+.anim-wave { animation: textWavy 0.6s ease-in-out infinite; }
+.anim-neon { animation: neonFlicker 1.5s infinite alternate; }
+.anim-gradient { animation: gradientShift 2s linear infinite; }
+.anim-morph { transition: all 0.25s ease-in-out; }
+

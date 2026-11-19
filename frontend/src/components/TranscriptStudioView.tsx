@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Mic, Search, Download, Edit2, Check, Play, Loader2, FileText, AlertCircle, Zap } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { Mic, Search, Download, Edit2, Check, Play, Loader2, FileText, AlertCircle, Zap, Upload, FolderUp } from "lucide-react";
 import { api, TranscriptData, TranscriptSegment } from "../api";
 
 interface Props {
@@ -20,6 +20,24 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [ytUrlInput, setYtUrlInput] = useState(defaultUrl);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    setError("");
+    setLoadingMsg(`Importing ${file.name} from your computer...`);
+    try {
+      const res = await api.transcription.importFile(projectId, file);
+      onTranscriptUpdated(res);
+    } catch (err: any) {
+      setError(err.message || "Failed to import transcript file");
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const handleFetchInstantYouTube = async () => {
     const targetUrl = ytUrlInput.trim();
@@ -148,6 +166,16 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
                 {loading ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
                 Whisper Audio
               </button>
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 rounded border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-400/20"
+                title="Upload .srt, .vtt, or timestamped .txt directly from PC"
+              >
+                <FolderUp size={13} />
+                Import File
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
@@ -257,6 +285,30 @@ export function TranscriptStudioView({ projectId, transcript, onSeek, onTranscri
                   Fetch (1s)
                 </button>
               </div>
+            </div>
+
+            {/* Local File Upload Option */}
+            <div className="w-full rounded-xl border border-dashed border-line hover:border-amber-400/60 bg-ink/30 p-5 text-center space-y-3 transition-colors">
+              <FolderUp size={24} className="mx-auto text-amber-400" />
+              <h4 className="font-semibold text-paper text-sm">Import Transcript File From PC</h4>
+              <p className="text-xs text-mute max-w-sm mx-auto">
+                Have a transcript already? Upload <strong>.srt</strong>, <strong>.vtt</strong>, or timestamped <strong>.txt</strong> directly from your computer.
+              </p>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".srt,.vtt,.txt"
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20 px-4 py-2 text-xs font-bold text-amber-300 disabled:opacity-40"
+              >
+                <FolderUp size={14} />
+                Choose File from PC
+              </button>
             </div>
 
             {/* Whisper Audio Option */}

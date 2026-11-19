@@ -53,8 +53,27 @@ def render_short_clip(
             
         words_per_chunk = template.get("subtitles", {}).get("words_per_chunk", 2)
         
-        if custom_subtitles:
+        if custom_subtitles and isinstance(custom_subtitles, list):
             chunks = custom_subtitles
+        elif custom_subtitles and isinstance(custom_subtitles, str):
+            # User edited plain text subtitles: break into timed word chunks weighted by syllable/character count
+            raw_words = custom_subtitles.strip().split()
+            if raw_words:
+                total_chars = max(sum(len(w) for w in raw_words), 1)
+                temp_words = []
+                cur_t = 0.2
+                usable_duration = max(duration - 0.4, 0.5)
+                for w in raw_words:
+                    w_dur = max((len(w) / total_chars) * usable_duration, 0.18)
+                    temp_words.append({
+                        "word": w,
+                        "start": round(cur_t, 2),
+                        "end": round(cur_t + w_dur, 2)
+                    })
+                    cur_t += w_dur
+                chunks = template_service.group_words_into_chunks(temp_words, words_per_chunk=words_per_chunk)
+            else:
+                chunks = []
         else:
             # Transcribe with faster-whisper word timestamps (with timeout safety)
             words = []
@@ -113,9 +132,9 @@ def render_short_clip(
             "-filter_complex", filter_complex,
             "-map", f"[{out_label}]",
             "-map", "0:a?",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M",
             "-r", "30", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:a", "aac", "-b:a", "256k",
             "-shortest",
             str(output_path)
         ]

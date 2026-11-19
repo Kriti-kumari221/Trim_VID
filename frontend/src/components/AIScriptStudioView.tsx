@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Sparkles, Brain, Clock, Flame, Film, Check, ArrowRight, Play, Loader2, AlertCircle, Key, Settings } from "lucide-react";
+import { Sparkles, Brain, Clock, Flame, Film, Check, ArrowRight, Play, Loader2, AlertCircle, Key, Settings, Plus, FileText, X } from "lucide-react";
 import { api, AnalysisData, ScriptData } from "../api";
 
 interface Props {
@@ -7,6 +7,7 @@ interface Props {
   analysis: AnalysisData | null;
   scripts: ScriptData[];
   onSeek: (seconds: number) => void;
+  onSelectCut?: (start: number, end: number) => void;
   onAnalysisUpdated: (a: AnalysisData) => void;
   onScriptsUpdated: (scripts: ScriptData[]) => void;
   onClipsCreated: () => void;
@@ -17,6 +18,7 @@ export function AIScriptStudioView({
   analysis,
   scripts,
   onSeek,
+  onSelectCut,
   onAnalysisUpdated,
   onScriptsUpdated,
   onClipsCreated,
@@ -32,6 +34,9 @@ export function AIScriptStudioView({
   const [aiProvider, setAiProvider] = useState<string>("gemini");
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem("cliptrim_ai_key") || "");
   const [showKeyInput, setShowKeyInput] = useState<boolean>(false);
+  const [showCustomModal, setShowCustomModal] = useState<boolean>(false);
+  const [customScriptText, setCustomScriptText] = useState<string>("");
+  const [importingCustom, setImportingCustom] = useState<boolean>(false);
 
   const updateApiKey = (k: string) => {
     setApiKey(k);
@@ -73,13 +78,66 @@ export function AIScriptStudioView({
     }
   };
 
+  const handleImportCustomScript = async () => {
+    if (!customScriptText.trim()) return;
+    setImportingCustom(true);
+    setError("");
+    try {
+      let res: ScriptData;
+      try {
+        // Try direct backend entity persistence endpoint first
+        res = await api.analysis.importCustomScript(projectId, customScriptText);
+      } catch (err: any) {
+        // Fallback: If running without backend restart, parse directly via parseScript and construct ScriptData client-side
+        console.warn("importCustomScript server endpoint error, running client-side parser fallback:", err);
+        const parsed = await api.autoShorts.parseScript(customScriptText);
+        if (!parsed.scenes || parsed.scenes.length === 0) {
+          throw new Error("Could not detect timestamped scenes in script.");
+        }
+        res = {
+          id: `custom_script_${Date.now()}`,
+          title: `Custom Reel Script (${parsed.scenes.length} Scenes)`,
+          duration_target: parsed.overall_range ? Math.round(parsed.overall_range[1] - parsed.overall_range[0]) : 60,
+          style: "custom_reel",
+          scenes: parsed.scenes,
+          created_at: Date.now() / 1000
+        };
+      }
+      onScriptsUpdated([res, ...scripts]);
+      setShowCustomModal(false);
+      setCustomScriptText("");
+      setActiveTab("scripts");
+    } catch (e: any) {
+      setError(e.message || "Failed to parse and import script");
+    } finally {
+      setImportingCustom(false);
+    }
+  };
+
   const handleMapScriptToClips = async (scriptId: string) => {
     setMapping(true);
     setError("");
     try {
-      await api.analysis.mapToClips(projectId, scriptId, "AI Script Clips");
+      // Find the script in local state
+      const targetScript = scripts.find((s) => s.id === scriptId);
+
+      // If this script was generated with a temporary client-side ID (or not yet in DB)
+      if (scriptId.startsWith("custom_script_") && targetScript) {
+        // Create clips directly through project clips API
+        for (const scene of targetScript.scenes) {
+          if (!scene.approved) continue;
+          const cName = `Scene_${String(scene.scene_num).padStart(2, "0")}_${scene.role.replace(/\s+/g, "_")}`;
+          await api.clips.create(projectId, {
+            name: cName,
+            start_time: scene.original_start,
+            end_time: scene.original_end
+          });
+        }
+      } else {
+        await api.analysis.mapToClips(projectId, scriptId, "AI Script Clips");
+      }
       onClipsCreated();
-      alert("Clips successfully created and mapped to project folder 'AI Script Clips'!");
+      alert("Clips successfully created and mapped to project!");
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -214,14 +272,24 @@ export function AIScriptStudioView({
             </button>
           </div>
 
-          <button
-            onClick={handleGenerateScript}
-            disabled={generating}
-            className="ml-auto inline-flex items-center gap-1.5 rounded bg-trim px-3 py-1 text-xs font-bold text-ink hover:bg-amber-300 disabled:opacity-40"
-          >
-            {generating ? <Loader2 size={14} className="animate-spin" /> : <Film size={14} />}
-            Generate Short-Video Script
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowCustomModal(true)}
+              className="inline-flex items-center gap-1.5 rounded border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs font-bold text-amber-300 hover:bg-amber-400/20 shadow-sm"
+              title="Paste your custom timestamped reel script directly"
+            >
+              <Plus size={13} />
+              Paste Custom Script
+            </button>
+            <button
+              onClick={handleGenerateScript}
+              disabled={generating}
+              className="inline-flex items-center gap-1.5 rounded bg-trim px-3 py-1 text-xs font-bold text-ink hover:bg-amber-300 disabled:opacity-40"
+            >
+              {generating ? <Loader2 size={14} className="animate-spin" /> : <Film size={14} />}
+              Generate Short-Video Script
+            </button>
+          </div>
         </div>
 
         {/* API Key Drawer */}
@@ -391,8 +459,14 @@ export function AIScriptStudioView({
                             <td className="p-3 font-mono text-mute">{scene.script_timeline}</td>
                             <td className="p-3">
                               <button
-                                onClick={() => onSeek(scene.original_start)}
+                                onClick={() => {
+                                  onSeek(scene.original_start);
+                                  if (onSelectCut) {
+                                    onSelectCut(scene.original_start, scene.original_end);
+                                  }
+                                }}
                                 className="flex items-center gap-1 font-mono text-trim hover:underline"
+                                title="Click to seek and set cut in timeline"
                               >
                                 <Play size={10} />
                                 {fmtTime(scene.original_start)} - {fmtTime(scene.original_end)}
@@ -416,6 +490,64 @@ export function AIScriptStudioView({
           )
         )}
       </div>
+
+      {/* Modal for Pasting Custom Structured Script */}
+      {showCustomModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-panel border border-line rounded-xl max-w-2xl w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="text-purple-400" size={18} />
+                <h3 className="text-base font-bold text-paper">Paste Your Own Reel / Scene Script</h3>
+              </div>
+              <button
+                onClick={() => setShowCustomModal(false)}
+                className="text-mute hover:text-paper"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-mute">
+              Paste your hand-crafted Short script with scene timestamps (e.g. <code>[Opening — 00:54:00]</code> or <code>00:54:00 – 00:57:01</code>). It will automatically map each scene with its exact source cut, visual notes, and on-screen text!
+            </p>
+
+            <textarea
+              rows={12}
+              value={customScriptText}
+              onChange={(e) => setCustomScriptText(e.target.value)}
+              placeholder="Paste script here... Example:
+00:54:00 – 00:57:01
+
+[Opening — 00:54:00]
+Acharya Prashant:
+“That is why I am first of all contesting the popular meaning of education...”
+
+[The main concept — 00:54:26]
+“See, if you go into Shruti...”"
+              style={{ backgroundColor: "#14161b", color: "#f3f4f6" }}
+              className="w-full rounded-lg p-3.5 text-xs font-mono border-2 border-line/80 focus:border-purple-400 focus:outline-none placeholder:text-gray-500 shadow-inner"
+            />
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setShowCustomModal(false)}
+                className="px-4 py-2 rounded-lg border border-line text-xs font-semibold text-mute hover:text-paper"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImportCustomScript}
+                disabled={importingCustom || !customScriptText.trim()}
+                className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 shadow"
+              >
+                {importingCustom ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Parse & Add to Shorts Scripts
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

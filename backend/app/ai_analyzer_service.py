@@ -348,6 +348,45 @@ def generate_short_script(
         "scenes": scenes
     }
 
+def save_custom_parsed_script(
+    project_id: str,
+    script_text: str,
+    title: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Parses a user-pasted structured reel script and saves it as an approved Script entity.
+    """
+    from . import ai_selection_service
+    overall_range, parsed_scenes = ai_selection_service.parse_custom_script_into_scenes(script_text)
+    if not parsed_scenes:
+        raise ValueError("Could not parse any timestamped scenes from script.")
+
+    duration_target = int(sum(s["duration"] for s in parsed_scenes))
+    if overall_range:
+        duration_target = int(overall_range[1] - overall_range[0])
+
+    script_title = title or f"Custom Reel Script ({duration_target}s)"
+    script_id = uuid.uuid4().hex
+
+    conn = db.get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO scripts (id, project_id, title, duration_target, style, scenes_json, created_at)
+        VALUES (?, ?, ?, ?, 'custom_reel', ?, ?)
+    """, (script_id, project_id, script_title, duration_target, json.dumps(parsed_scenes), time.time()))
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": script_id,
+        "project_id": project_id,
+        "title": script_title,
+        "duration_target": duration_target,
+        "style": "custom_reel",
+        "scenes": parsed_scenes,
+        "overall_range": overall_range
+    }
+
 def map_script_to_project_clips(project_id: str, script_id: str, folder_name: str = "Script Clips") -> List[Dict[str, Any]]:
     """Converts approved script scenes into real clips in a dedicated project folder."""
     conn = db.get_connection()

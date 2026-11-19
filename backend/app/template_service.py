@@ -41,44 +41,86 @@ def format_ass_time(seconds: float) -> str:
         cs = 99
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-def group_words_into_chunks(word_segments: List[Dict[str, Any]], words_per_chunk: int = 2, max_words: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Groups word-level timestamps (from faster-whisper) into 1-3 word animated subtitle chunks."""
+def group_words_into_chunks(
+    word_segments: List[Dict[str, Any]],
+    words_per_chunk: int = 3,
+    max_words: Optional[int] = None,
+    max_chunk_duration: float = 1.85,
+    min_chunk_duration: float = 0.40
+) -> List[Dict[str, Any]]:
+    """
+    Groups word-level timestamps (faster-whisper or speech cadence model) into
+    punchy, natural spoken-rhythm chunks (2-4 words per cue, ~0.4s to 1.85s duration)
+    matching viral YouTube Shorts & Reels cadence (e.g. Acharya Prashant subtitle style).
+    """
     if max_words is not None:
         words_per_chunk = max_words
     if not word_segments:
         return []
     
+    # Common speech boundary conjunctions & prepositions where natural breath pauses occur
+    BREAK_BEFORE_WORDS = {
+        "and", "but", "so", "because", "or", "if", "when", "while", "that", "which",
+        "to", "for", "with", "from", "into", "about", "is", "are", "was", "were",
+        "aur", "par", "lekin", "isliye", "kyunki", "ki", "toh", "jab", "tab", "ka", "ke", "ki"
+    }
+
     chunks = []
     current_words = []
     
-    for w in word_segments:
+    for i, w in enumerate(word_segments):
         text = w.get("word", "").strip()
         if not text:
             continue
         start = float(w.get("start", 0.0))
-        end = float(w.get("end", start + 0.5))
-        current_words.append({"text": text, "start": start, "end": end})
-        
-        # Check boundary or chunk size
-        if len(current_words) >= words_per_chunk or text.endswith((".", "?", "!", "|", "।")):
-            chunk_start = current_words[0]["start"]
-            chunk_end = max(current_words[-1]["end"], chunk_start + 0.35)
-            chunk_text = " ".join(item["text"] for item in current_words)
+        end = float(w.get("end", start + 0.35))
+        if end <= start:
+            end = start + 0.35
+
+        # Check pause gap from preceding word (gap >= 0.28s indicates natural spoken pause)
+        has_speech_gap = False
+        if current_words:
+            gap = start - current_words[-1]["end"]
+            if gap >= 0.28:
+                has_speech_gap = True
+
+        # Check if next word initiates a fresh phrase
+        clean_word_lower = text.strip(",.?!;:।|-—\"'“”").lower()
+        starts_clause = (clean_word_lower in BREAK_BEFORE_WORDS) and (len(current_words) >= 2)
+
+        cur_dur = (start - current_words[0]["start"]) if current_words else 0.0
+
+        if current_words and (has_speech_gap or cur_dur >= max_chunk_duration or len(current_words) >= 4 or starts_clause):
+            c_start = current_words[0]["start"]
+            c_end = max(current_words[-1]["end"], c_start + min_chunk_duration)
             chunks.append({
-                "start": chunk_start,
-                "end": chunk_end,
-                "text": chunk_text
+                "start": c_start,
+                "end": c_end,
+                "text": " ".join(item["text"] for item in current_words)
+            })
+            current_words = []
+
+        current_words.append({"text": text, "start": start, "end": end})
+
+        # Punctuation check at the end of word (comma, period, question mark, dash)
+        ends_punctuation = any(text.endswith(p) for p in (".", "?", "!", "|", "।", ",", ";", ":", "—", "-"))
+        if ends_punctuation and len(current_words) >= 2:
+            c_start = current_words[0]["start"]
+            c_end = max(current_words[-1]["end"], c_start + min_chunk_duration)
+            chunks.append({
+                "start": c_start,
+                "end": c_end,
+                "text": " ".join(item["text"] for item in current_words)
             })
             current_words = []
             
     if current_words:
-        chunk_start = current_words[0]["start"]
-        chunk_end = max(current_words[-1]["end"], chunk_start + 0.35)
-        chunk_text = " ".join(item["text"] for item in current_words)
+        c_start = current_words[0]["start"]
+        c_end = max(current_words[-1]["end"], c_start + min_chunk_duration)
         chunks.append({
-            "start": chunk_start,
-            "end": chunk_end,
-            "text": chunk_text
+            "start": c_start,
+            "end": c_end,
+            "text": " ".join(item["text"] for item in current_words)
         })
         
     return chunks
@@ -88,13 +130,14 @@ def generate_ass_subtitles(
     template: Dict[str, Any],
     output_path: Path,
     casing: str = "default",  # "default", "uppercase", "lowercase"
-    animation_effect: str = "glow_punch"  # "glow_punch", "scale_pop", "clean"
+    animation_effect: str = "glow_punch"  # "glow_punch", "scale_pop", "word_highlight", "clean"
 ) -> Path:
     """
     Generates a professional ASS subtitle script:
     - Text casing support (UPPERCASE like YouTube Shorts / Acharya Prashant samples)
     - Animated subtitle punch-in effects (\t(0, 100, \fscx112\fscy112) -> \t(100, 200, \fscx100\fscy100))
     - Dual layer: Layer 0 warm diffuse glow, Layer 1 ultra-sharp text with bold dark outline.
+    - Word emphasis support: 'word_highlight' enlarges keyword (e.g. {\fscx120\fscy120}KEYWORD{\fscx100\fscy100}).
     """
     sub_cfg = template.get("subtitles", {})
     canvas = template.get("canvas", {"width": 1080, "height": 1920})
@@ -147,6 +190,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if animation_effect == "scale_pop":
             anim_tag = r"{\t(0,90,\fscx118\fscy118)\t(90,180,\fscx100\fscy100)}"
             glow_anim = r"{\blur6\t(0,90,\fscx118\fscy118)\t(90,180,\fscx100\fscy100)}"
+        elif animation_effect == "word_highlight":
+            # Highlight key word large and accented
+            w_list = raw_text.split()
+            if len(w_list) > 1:
+                # Make the longest or first punchy word 120% size and bold
+                longest_idx = max(range(len(w_list)), key=lambda idx: len(w_list[idx]))
+                w_list[longest_idx] = r"{\fscx120\fscy120\c&H0000FFFF&}" + w_list[longest_idx] + r"{\fscx100\fscy100\c" + primary_color + r"}"
+                raw_text = " ".join(w_list)
+            anim_tag = r"{\t(0,90,\fscx112\fscy112)\t(90,180,\fscx100\fscy100)}"
+            glow_anim = r"{\blur6}"
         elif animation_effect == "glow_punch":
             anim_tag = r"{\t(0,80,\fscx108\fscy108)\t(80,160,\fscx100\fscy100)}"
             glow_anim = r"{\blur7\t(0,80,\fscx108\fscy108)\t(80,160,\fscx100\fscy100)}"
@@ -176,60 +229,75 @@ def build_template_filter_complex(
 ) -> Tuple[str, str]:
     """
     Constructs the exact FFmpeg filter_complex graph to build 1080x1920 vertical Shorts:
-    1. Base 1080x1920 black canvas.
-    2. Header: uses authentic AP logo banner PNG if available, or crisp text with top/bottom gold borders.
-    3. Speaker crop: auto-centered on detected speaker face with smooth square framing.
-    4. Subtitles: burned-in ASS subtitles with fontsdir path escaping.
+    Supports:
+    1. Classic layout: Single focused speaker crop (1080x1080) with authentic AP banner & soft glowing captions.
+    2. Dual Split layout: Upper active speaker (1080x980) + metallic gold divider + lower side-by-side dual speaker cards (each ~525x520) showing both speakers without weird dividers cutting through faces!
     """
     cw = template.get("canvas", {}).get("width", 1080)
     ch = template.get("canvas", {}).get("height", 1920)
     bg_color = template.get("canvas", {}).get("background_color", "#000000")
-    
-    vf = template.get("video_frame", {})
-    tw = vf.get("target_width", 1080)
-    th = vf.get("target_height", 1080)
-    v_pos_y = vf.get("position_y", 420)
+    layout_type = template.get("layout_type", "classic")
     
     fonts_dir = (config.BASE_DIR / "data" / "fonts").resolve()
     fonts_dir_escaped = str(fonts_dir).replace("\\", "/").replace(":", "\\:")
     
-    # Check for authentic user header banner logo PNG
     default_banner = (config.BASE_DIR / "data" / "templates" / "ap_header_logo.png").resolve()
     banner_to_use = header_banner_path or (default_banner if default_banner.is_file() else None)
     
-    # 1. Video Crop & Scale chain
-    if crop_w and crop_h and crop_x is not None and crop_y is not None:
-        crop_filter = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
-    else:
-        # Auto-center square crop based on minimum dimension
-        crop_filter = "crop=ih:ih:(iw-ih)/2:0"
+    parts = []
+    current_out = "v_base"
+
+    if layout_type == "dual_split":
+        # Professional 2-Speaker Dual Split Layout (from user reference):
+        # Top panel: Active speaker close-up scaled to 1080x980
+        # Bottom panels: Left speaker card (525x530) and Right speaker card (525x530) side by side!
+        parts.append(f"color=c={bg_color}:s={cw}x{ch}:r=30[bg]")
         
-    scale_video = f"[0:v]{crop_filter},scale={tw}:{th}:flags=lanczos[scaled_vid]"
-    
-    # 2. Pad to 1080x1920 centered canvas
-    pad_canvas = f"[scaled_vid]pad={cw}:{ch}:(ow-iw)/2:{v_pos_y}:color={bg_color}[v1]"
-    current_out = "v1"
-    
-    # 3. Header
-    header_filter = ""
+        # Upper speaker crop
+        if crop_w and crop_h and crop_x is not None and crop_y is not None:
+            top_crop = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
+        else:
+            top_crop = "crop=ih:ih:(iw-ih)/2:0"
+        parts.append(f"[0:v]{top_crop},scale=1080:980:flags=lanczos[top_vid]")
+        
+        # Lower dual speaker crops (left ~28% width, right ~73% width)
+        parts.append("[0:v]crop=iw*0.45:ih:0:(ih-ih)/2,scale=525:520:flags=lanczos,drawbox=x=0:y=0:w=525:h=520:color=white@0.6:t=2[bot_left]")
+        parts.append("[0:v]crop=iw*0.45:ih:iw*0.55:(ih-ih)/2,scale=525:520:flags=lanczos,drawbox=x=0:y=0:w=525:h=520:color=white@0.6:t=2[bot_right]")
+        
+        # Overlay top video at y=200
+        parts.append("[bg][top_vid]overlay=0:200[v_top]")
+        # Divider line between top and bottom
+        parts.append("[v_top]drawbox=x=0:y=1190:w=1080:h=4:color=#E5B83B:t=fill[v_div]")
+        # Overlay bottom left card at x=10, y=1210
+        parts.append("[v_div][bot_left]overlay=10:1210[v_bl]")
+        # Overlay bottom right card at x=545, y=1210
+        parts.append("[v_bl][bot_right]overlay=545:1210[v_base]")
+    else:
+        # Standard Classic Layout: Auto-centered speaker crop
+        vf = template.get("video_frame", {})
+        tw = vf.get("target_width", 1080)
+        th = vf.get("target_height", 1080)
+        v_pos_y = vf.get("position_y", 420)
+        
+        if crop_w and crop_h and crop_x is not None and crop_y is not None:
+            crop_filter = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
+        else:
+            crop_filter = "crop=ih:ih:(iw-ih)/2:0"
+            
+        parts.append(f"[0:v]{crop_filter},scale={tw}:{th}:flags=lanczos[scaled_vid]")
+        parts.append(f"[scaled_vid]pad={cw}:{ch}:(ow-iw)/2:{v_pos_y}:color={bg_color}[v_base]")
+
+    # Header Overlay
     if banner_to_use and banner_to_use.is_file():
-        # Overlay the exact authentic Acharya Prashant header banner PNG scaled across width
         banner_escaped = str(banner_to_use).replace("\\", "/").replace(":", "\\:")
-        # Scale banner to width 1080, maintaining aspect ratio (~1080x92)
-        # Position at Y=100
-        hdr_overlay = (
-            f"movie='{banner_escaped}',scale={cw}:-1[banner];"
-            f"[{current_out}][banner]overlay=(W-w)/2:90[v2]"
-        )
-        header_filter = hdr_overlay
-        current_out = "v2"
+        parts.append(f"movie='{banner_escaped}',scale={cw}:-1[banner]")
+        parts.append(f"[{current_out}][banner]overlay=(W-w)/2:90[v_hdr]")
+        current_out = "v_hdr"
     else:
         hdr = template.get("header", {})
         hdr_text = hdr.get("text", "A C H A R Y A   P R A S H A N T")
         hdr_font = fonts_dir / hdr.get("font_file", "Khand-Bold.ttf")
         hdr_font_escaped = str(hdr_font).replace("\\", "/").replace(":", "\\:")
-        
-        # Dual gold lines (top & bottom like official YouTube shorts sample)
         gold_color = "#E5B83B"
         draw_top_line = f"drawbox=x=0:y=100:w={cw}:h=4:color={gold_color}:t=fill"
         draw_hdr = (
@@ -237,23 +305,15 @@ def build_template_filter_complex(
             f"fontsize=46:fontcolor=white:x=(w-text_w)/2:y=125"
         )
         draw_bot_line = f"drawbox=x=0:y=188:w={cw}:h=4:color={gold_color}:t=fill"
-        header_filter = f"[{current_out}]{draw_top_line},{draw_hdr},{draw_bot_line}[v2]"
-        current_out = "v2"
-        
-    # 4. Burn-in ASS Subtitles
+        parts.append(f"[{current_out}]{draw_top_line},{draw_hdr},{draw_bot_line}[v_hdr]")
+        current_out = "v_hdr"
+
+    # Burn-in ASS Subtitles
     ass_path_obj = Path(ass_subtitles_path) if ass_subtitles_path else None
     if ass_path_obj and ass_path_obj.is_file():
         ass_escaped = str(ass_path_obj.resolve()).replace("\\", "/").replace(":", "\\:")
-        sub_filter = f"[{current_out}]subtitles='{ass_escaped}':fontsdir='{fonts_dir_escaped}'[v_out]"
+        parts.append(f"[{current_out}]subtitles='{ass_escaped}':fontsdir='{fonts_dir_escaped}'[v_out]")
         current_out = "v_out"
-    else:
-        sub_filter = ""
-        
-    parts = [scale_video, pad_canvas]
-    if header_filter:
-        parts.append(header_filter)
-    if sub_filter:
-        parts.append(sub_filter)
-        
+
     filter_complex = ";".join(parts)
     return filter_complex, current_out

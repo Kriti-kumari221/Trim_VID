@@ -184,16 +184,13 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # Android client MUST be first because it bypasses Google's datacenter/desktop bot wall!
-    # Format 18 is 360p progressive MP4 that android client reliably serves without login.
+    # Download maximum quality available: prioritize default/mweb/ios with separate video+audio merge
+    # High-definition (1080p/1440p/720p) first; NEVER fall back to low 360p (format 18) unless high-res streams fail completely
     client_configs = [
-        (["android"],      "18/22/17/36/best"),
-        (["android_vr"],   "18/22/17/36/best"),
-        (["ios"],          "18/22/best[ext=mp4]/best"),
-        (None,             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/22/best"),
-        (["mweb"],         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
-        (["tv_embedded"],  "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
-        (["web"],          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/18/best"),
+        (None,             "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
+        (["ios"],          "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
+        (["mweb"],         "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
+        (["android"],      "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/22/best"),
     ]
 
     last_exc: Exception | None = None

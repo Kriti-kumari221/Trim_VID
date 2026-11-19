@@ -309,8 +309,59 @@ def format_timestamp_vtt(seconds: float) -> str:
     ms = int(round((seconds - int(seconds)) * 1000))
     return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
-def export_transcript_file(project_id: str, fmt: str) -> Tuple[str, str, bytes]:
-    """Exports transcript to TXT, SRT, VTT, or DOCX."""
+def chunk_segments_into_speech_rhythm(segments: List[Dict[str, Any]], words_per_cue: int = 3) -> List[Dict[str, Any]]:
+    """
+    Converts coarse sentence-level transcription segments into modern short-form
+    punchy speech chunks (2 to 4 words per cue, ~0.4s to 1.85s duration),
+    matching viral Shorts / Reels subtitle style (Acharya Prashant sample 112.srt).
+    """
+    from . import template_service
+    all_chunks = []
+    
+    for seg in segments:
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        seg_start = float(seg.get("start", 0.0))
+        seg_end = float(seg.get("end", seg_start + 2.0))
+        seg_dur = max(seg_end - seg_start, 0.5)
+        
+        words = text.split()
+        if not words:
+            continue
+            
+        # Character-weighted duration allocation for natural speech cadence
+        total_chars = max(sum(len(w) for w in words), 1)
+        word_segments = []
+        cur_t = seg_start
+        for w in words:
+            w_dur = max((len(w) / total_chars) * seg_dur, 0.16)
+            word_segments.append({
+                "word": w,
+                "start": round(cur_t, 3),
+                "end": round(cur_t + w_dur, 3)
+            })
+            cur_t += w_dur
+            
+        cue_chunks = template_service.group_words_into_chunks(
+            word_segments=word_segments,
+            words_per_chunk=words_per_cue,
+            max_chunk_duration=1.85,
+            min_chunk_duration=0.35
+        )
+        
+        for c in cue_chunks:
+            all_chunks.append({
+                "start": c["start"],
+                "end": c["end"],
+                "speaker": seg.get("speaker", "Speaker 1"),
+                "text": c["text"]
+            })
+            
+    return all_chunks
+
+def export_transcript_file(project_id: str, fmt: str, start_time: Optional[float] = None, end_time: Optional[float] = None) -> Tuple[str, str, bytes]:
+    """Exports transcript to TXT, SRT, VTT, or DOCX, optionally filtered to a time range and chunked into short-form speech cadence."""
     conn = db.get_connection()
     c = conn.cursor()
     row = c.execute("SELECT * FROM transcripts WHERE project_id = ?", (project_id,)).fetchone()
@@ -323,6 +374,11 @@ def export_transcript_file(project_id: str, fmt: str) -> Tuple[str, str, bytes]:
     p_name = (p_row["name"] if p_row else "transcript").replace(" ", "_")
     segments = json.loads(row["segments_json"] or "[]")
     
+    # Filter by time range if requested (e.g. for a selected clip)
+    if start_time is not None and end_time is not None and end_time > start_time:
+        segments = [s for s in segments if s.get("end", 0) > start_time and s.get("start", 0) < end_time]
+        p_name = f"{p_name}_{int(start_time)}s_{int(end_time)}s"
+        
     fmt = fmt.lower()
     if fmt == "txt":
         content = f"Transcript for {p_name}\n\n"
@@ -331,14 +387,17 @@ def export_transcript_file(project_id: str, fmt: str) -> Tuple[str, str, bytes]:
         return f"{p_name}_transcript.txt", "text/plain", content.encode("utf-8")
         
     elif fmt == "srt":
+        # Chunk into punchy 2-4 word speech cadence chunks matching sample 112.srt with cream-yellow font tag
+        chunks = chunk_segments_into_speech_rhythm(segments, words_per_cue=3)
         content = ""
-        for i, s in enumerate(segments, 1):
-            content += f"{i}\n{format_timestamp_srt(s['start'])} --> {format_timestamp_srt(s['end'])}\n{s['text']}\n\n"
+        for i, s in enumerate(chunks, 1):
+            content += f"{i}\n{format_timestamp_srt(s['start'])} --> {format_timestamp_srt(s['end'])}\n<font color=#F8F0AEFF>{s['text']}</font>\n\n"
         return f"{p_name}_subtitles.srt", "application/x-subrip", content.encode("utf-8")
         
     elif fmt == "vtt":
+        chunks = chunk_segments_into_speech_rhythm(segments, words_per_cue=3)
         content = "WEBVTT\n\n"
-        for i, s in enumerate(segments, 1):
+        for i, s in enumerate(chunks, 1):
             content += f"{i}\n{format_timestamp_vtt(s['start'])} --> {format_timestamp_vtt(s['end'])}\n{s['text']}\n\n"
         return f"{p_name}_subtitles.vtt", "text/vtt", content.encode("utf-8")
         
