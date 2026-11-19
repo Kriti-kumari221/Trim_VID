@@ -172,8 +172,8 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
         "outtmpl": out_tmpl,
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,
+        "no_warnings": False,
         "nocheckcertificate": True,
         "geo_bypass": True,
         "max_filesize": max_bytes,
@@ -188,9 +188,9 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
     cookie_file = _get_cookie_file()
     if cookie_file:
         opts["cookiefile"] = str(cookie_file)
-        print(f"[yt-dlp] Using cookie file at: {cookie_file} (size: {cookie_file.stat().st_size} bytes)")
+        print(f"[yt-dlp] Cookie file found at: {cookie_file} (size: {cookie_file.stat().st_size} bytes)")
     else:
-        print("[yt-dlp] No cookie file found (YTDLP_COOKIES not set or empty)")
+        print(f"[yt-dlp] WARNING: No cookie file found! YTDLP_COOKIES is empty and no cookies.txt found in disk.")
     proxy = os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
     if proxy:
         opts["proxy"] = proxy
