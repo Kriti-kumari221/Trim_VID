@@ -166,7 +166,7 @@ def _get_cookie_file() -> Optional[Path]:
 
 
 def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int) -> dict:
-    """Build yt-dlp options targeting specific YouTube player clients."""
+    """Build yt-dlp options targeting specific YouTube player clients with TLS browser impersonation."""
     opts = {
         "format": fmt,
         "outtmpl": out_tmpl,
@@ -178,6 +178,7 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
         "geo_bypass": True,
         "max_filesize": max_bytes,
         "progress_hooks": [hook] if hook else [],
+        "impersonate": "chrome",  # Uses curl-cffi to forge Chrome's TLS fingerprint (crucial on datacenter IPs)
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
