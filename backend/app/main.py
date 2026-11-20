@@ -201,6 +201,7 @@ def _get_cookie_file() -> Optional[Path]:
 
 def _yt_opts_for_client(
     clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int,
+    player_skip: Optional[list[str]] = None, use_cookies: bool = True,
 ) -> dict:
     """Build yt-dlp options targeting specific YouTube player clients and formats."""
     opts = {
@@ -219,14 +220,22 @@ def _yt_opts_for_client(
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
+    extractor_args = {}
     if clients:
-        opts["extractor_args"] = {"youtube": {"player_client": clients}}
-    cookie_file = _get_cookie_file()
-    if cookie_file:
-        opts["cookiefile"] = str(cookie_file)
-        print(f"[yt-dlp] Cookie file found at: {cookie_file} (size: {cookie_file.stat().st_size} bytes)")
-    else:
-        print(f"[yt-dlp] WARNING: No cookie file found! YTDLP_COOKIES is empty and no cookies.txt found in disk.")
+        extractor_args["player_client"] = clients
+    if player_skip:
+        extractor_args["player_skip"] = player_skip
+    if extractor_args:
+        opts["extractor_args"] = {"youtube": extractor_args}
+
+    if use_cookies:
+        cookie_file = _get_cookie_file()
+        if cookie_file:
+            opts["cookiefile"] = str(cookie_file)
+            print(f"[yt-dlp] Cookie file found at: {cookie_file} (size: {cookie_file.stat().st_size} bytes)")
+        else:
+            print(f"[yt-dlp] WARNING: No cookie file found! YTDLP_COOKIES is empty and no cookies.txt found in disk.")
+
     proxy = os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
     if proxy:
         opts["proxy"] = proxy
@@ -245,24 +254,31 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # High-definition with multi-client failover.
-    # Pairing mobile clients with 'web' ensures player JavaScript is always loaded for signature deciphering.
+    # Multi-strategy failover to bypass YouTube datacenter bot verification on cloud hosts:
+    # 1. Android client skipping web configs (bypasses SABR/bot checks on datacenter IPs)
+    # 2. iOS client skipping web configs
+    # 3. TV / TV Samsung client with cookies
+    # 4. Standard client negotiation with cookies
+    # 5. Fallback single stream (b/best)
     client_configs = [
-        # Strategy 1: Default yt-dlp client negotiation with cookies (safest and standard)
-        (None,               "bestvideo*+bestaudio/best/b"),
-        # Strategy 2: Mobile Web + Web fallback
-        (["mweb", "web"],    "bestvideo*+bestaudio/best/b"),
-        # Strategy 3: iOS + Web
-        (["ios", "web"],     "bestvideo*+bestaudio/best/b"),
-        # Strategy 4: Android + Web
-        (["android", "web"], "bestvideo*+bestaudio/best/b"),
-        # Strategy 5: Resilient single stream fallback
-        (None,               "b/best"),
+        # Strategy 1: Android native client (does not trigger web bot challenge on datacenter IPs)
+        (["android"],         ["web", "configs"], False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 2: iOS native client
+        (["ios"],             ["web", "configs"], False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 3: TV client with cookies
+        (["tv"],              None,               True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 4: Standard yt-dlp client negotiation with cookies
+        (None,                None,               True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 5: Mobile Web + Web with cookies
+        (["mweb", "web"],     None,               True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 6: Single stream fallback
+        (["android"],         ["web", "configs"], False, "b/best"),
+        (None,                None,               True,  "b/best"),
     ]
 
     last_exc: Exception | None = None
-    for clients, fmt in client_configs:
-        opts = _yt_opts_for_client(clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES)
+    for clients, skip, use_cookies, fmt in client_configs:
+        opts = _yt_opts_for_client(clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES, player_skip=skip, use_cookies=use_cookies)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
