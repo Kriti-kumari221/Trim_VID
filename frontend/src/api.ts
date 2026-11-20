@@ -145,11 +145,18 @@ export type VideoAssessment = {
   thumbnail_url: string | null; path: string
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+const envBase = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
 
 export const apiUrl = (path: string) => {
   if (/^https?:\/\//i.test(path)) return path;
-  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (typeof window !== "undefined") {
+    // If backend URL matches current origin or if running on local all-in-one port (8000), use same-origin
+    if (!envBase || window.location.origin === envBase || (window.location.port === "8000" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"))) {
+      return cleanPath;
+    }
+  }
+  return `${envBase}${cleanPath}`;
 };
 
 async function j<T>(r: Response): Promise<T> {

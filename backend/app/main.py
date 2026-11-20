@@ -25,7 +25,23 @@ THUMBS = 16
 ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
 app = FastAPI(title="ClipTrim HD Studio")
-app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=config.CORS_ORIGINS if config.CORS_ORIGINS != ["*"] else [
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
+        "https://trim-vid-34.onrender.com",
+        "https://trim-vid.onrender.com",
+    ],
+    allow_origin_regex=r"^https?://.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 from . import studio_routes
 app.include_router(studio_routes.router)
 JOBS: dict[str, dict] = {}
