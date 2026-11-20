@@ -250,23 +250,20 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # High-definition with resilient multi-client failover.
-    # android_vr and ios are particularly effective on datacenter IPs (like Render/AWS)
+    # High-definition with multi-client failover.
+    # Pairing mobile clients with 'web' ensures player JavaScript is always loaded for signature deciphering,
+    # preventing yt-dlp's AssertionError: '_construct_player_url must take one of player_id or player_url'.
     client_configs = [
-        # Strategy 1: Android VR (Oculus Quest) client - completely bypasses botguard challenge on datacenter IPs
-        (["android_vr"],      "best/b/bestvideo+bestaudio"),
-        # Strategy 2: Android Creator client
-        (["android_creator"], "best/b/bestvideo+bestaudio"),
-        # Strategy 3: Standard Android client
-        (["android"],         "best/b/bestvideo+bestaudio"),
-        # Strategy 4: iOS client
-        (["ios"],             "best/b/bestvideo+bestaudio"),
-        # Strategy 5: Mobile Web (MWeb)
-        (["mweb"],            "bestvideo+bestaudio/best/b"),
-        # Strategy 6: Standard Web
-        (["web"],             "bestvideo+bestaudio/best/b"),
-        # Strategy 7: Default client fallback
-        (None,                "best/b"),
+        # Strategy 1: Default yt-dlp client negotiation with cookies (safest and standard)
+        (None,               "bestvideo*+bestaudio/best/b"),
+        # Strategy 2: Mobile Web + Web fallback
+        (["mweb", "web"],    "bestvideo*+bestaudio/best/b"),
+        # Strategy 3: iOS + Web
+        (["ios", "web"],     "bestvideo*+bestaudio/best/b"),
+        # Strategy 4: Android + Web
+        (["android", "web"], "bestvideo*+bestaudio/best/b"),
+        # Strategy 5: Resilient single stream fallback
+        (None,               "b/best"),
     ]
 
     last_exc: Exception | None = None
