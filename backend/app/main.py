@@ -152,10 +152,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _get_cookie_file() -> Optional[Path]:
-    """Checks for cookie file from environment variable YTDLP_COOKIES or local cookies.txt."""
+    """Finds or restores a working Netscape cookie file for yt-dlp."""
     cookie_content = os.getenv("YTDLP_COOKIES", "").strip()
     if cookie_content:
-        # Check if cookie_content is base64 encoded (common on cloud hosts to preserve newlines)
+        # Check if cookie_content is base64 encoded
         if not cookie_content.startswith("#") and "\n" not in cookie_content and len(cookie_content) > 50:
             try:
                 import base64
@@ -164,20 +164,38 @@ def _get_cookie_file() -> Optional[Path]:
                     cookie_content = decoded
             except Exception:
                 pass
-        cookie_path = config.DATA_DIR / "cookies.txt"
-        cookie_path.write_text(cookie_content, encoding="utf-8")
-        return cookie_path
+        if ("# Netscape" in cookie_content or "\t" in cookie_content) and len(cookie_content) > 100:
+            cookie_path = config.DATA_DIR / "cookies.txt"
+            cookie_path.parent.mkdir(parents=True, exist_ok=True)
+            cookie_path.write_text(cookie_content, encoding="utf-8")
+            return cookie_path
+        else:
+            print("[yt-dlp] WARNING: YTDLP_COOKIES environment variable is not valid Netscape cookies. Ignoring it.")
 
-    # Check candidates for baked-in cookies.txt in Docker container
+    # Check candidates for valid baked-in cookies.txt
     for p in [
-        config.DATA_DIR / "cookies.txt",
-        config.BASE_DIR / "cookies.txt",
-        config.BASE_DIR.parent / "cookies.txt",
-        Path("/app/backend/cookies.txt"),
+        config.BASE_DIR / "cookies.txt",           # backend/cookies.txt (baked in repo)
+        Path("/app/backend/cookies.txt"),          # Render Docker backend/cookies.txt
+        config.DATA_DIR / "cookies.txt",           # persistent data / user uploaded cookies
+        config.BASE_DIR.parent / "cookies.txt",    # root cookies.txt
         Path("/app/cookies.txt"),
     ]:
         if p.is_file() and p.stat().st_size > 100:
-            return p
+            try:
+                head = p.read_text(encoding="utf-8", errors="ignore")[:300]
+                if "# Netscape" in head or "\t" in head:
+                    # Also ensure copied to DATA_DIR for consistency
+                    dst = config.DATA_DIR / "cookies.txt"
+                    if not dst.is_file() or dst.stat().st_size == 0:
+                        try:
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(p, dst)
+                        except Exception:
+                            pass
+                    return p
+            except Exception:
+                pass
+
     return None
 
 
@@ -232,19 +250,23 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             if total > 0:
                 progress_cb(min(0.95, downloaded / total))
 
-    # Download maximum quality available: prioritize default/mweb/ios with separate video+audio merge
-    # High-definition (1080p/1440p/720p) first, followed by resilient fallbacks (best / mp4)
+    # High-definition with resilient multi-client failover.
+    # android_vr and ios are particularly effective on datacenter IPs (like Render/AWS)
     client_configs = [
-        # Strategy 1: iOS client with cookies & mobile headers (Bypasses web SABR / bot challenge on datacenter IPs)
-        (["ios"],          "bestvideo*+bestaudio/best"),
-        # Strategy 2: Android client
-        (["android"],      "bestvideo*+bestaudio/best"),
-        # Strategy 3: MWeb (Mobile Web)
-        (["mweb"],         "bestvideo*+bestaudio/best"),
-        # Strategy 4: Web with high definition (720p+)
-        (None,             "bestvideo[height>=720]+bestaudio/bestvideo+bestaudio/best[height>=720]/best"),
-        # Strategy 5: Any available stream
-        (None,             "b/best"),
+        # Strategy 1: Android VR (Oculus Quest) client - completely bypasses botguard challenge on datacenter IPs
+        (["android_vr"],      "best/b/bestvideo+bestaudio"),
+        # Strategy 2: Android Creator client
+        (["android_creator"], "best/b/bestvideo+bestaudio"),
+        # Strategy 3: Standard Android client
+        (["android"],         "best/b/bestvideo+bestaudio"),
+        # Strategy 4: iOS client
+        (["ios"],             "best/b/bestvideo+bestaudio"),
+        # Strategy 5: Mobile Web (MWeb)
+        (["mweb"],            "bestvideo+bestaudio/best/b"),
+        # Strategy 6: Standard Web
+        (["web"],             "bestvideo+bestaudio/best/b"),
+        # Strategy 7: Default client fallback
+        (None,                "best/b"),
     ]
 
     last_exc: Exception | None = None
@@ -270,11 +292,10 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
                     except OSError: pass
             continue
 
+    detail = str(last_exc).strip() if last_exc and str(last_exc).strip() else repr(last_exc)
     raise RuntimeError(
         f"Could not download video from YouTube on this server IP. "
-        f"If deployed on a cloud host (like Render/AWS), YouTube may require cookies. "
-        f"Set YTDLP_COOKIES environment variable in Render, or upload the video directly. "
-        f"Details: {last_exc}"
+        f"Details: {detail}"
     )
 
 
@@ -320,7 +341,8 @@ def _run_import_job(j: dict):
                 pass
         j.update(status="done", progress=1.0, result=result)
     except Exception as e:
-        j.update(status="failed", error=str(e))
+        err_msg = str(e).strip() if e and str(e).strip() else repr(e)
+        j.update(status="failed", error=err_msg or "Failed to download video from link")
         shutil.rmtree(d, ignore_errors=True)
 
 
