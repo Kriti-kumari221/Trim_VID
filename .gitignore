@@ -13,9 +13,13 @@ __pycache__/
 # IDE
 .vscode/
 
+# Node
+node_modules/
+frontend/node_modules/
+
 # Build files
-dist/
 build/~
+
 # Python virtual environment
 .venv/
 backend/.venv/
