@@ -68,7 +68,7 @@ Double-click or run from PowerShell / Command Prompt:
 ```cmd
 .\run.bat
 ```
-This automatically launches the FastAPI backend and serves the production studio on **`http://localhost:8000`**.
+This automatically launches the FastAPI backend and serves the production studio on **`https://trim-vid.onrender.com`**.
 
 ### Development Mode (Hot-Reload)
 ```cmd

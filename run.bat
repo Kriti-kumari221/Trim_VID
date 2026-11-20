@@ -11,7 +11,7 @@ if not exist ".venv\Scripts\python.exe" (
     call .venv\Scripts\activate.bat
 )
 
-echo Starting ClipTrim HD on http://localhost:8000 ...
-start http://localhost:8000
+echo Starting ClipTrim HD on https://trim-vid.onrender.com ...
+start https://trim-vid.onrender.com
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 pause

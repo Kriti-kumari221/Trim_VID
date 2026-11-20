@@ -11,5 +11,5 @@ if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
     .\.venv\Scripts\pip.exe install -r requirements.txt
 }
 
-Start-Process "http://localhost:8000"
+Start-Process "https://trim-vid.onrender.com/"
 & ".\.venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
