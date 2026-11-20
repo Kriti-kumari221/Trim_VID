@@ -201,9 +201,8 @@ def _get_cookie_file() -> Optional[Path]:
 
 def _yt_opts_for_client(
     clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int,
-    impersonate: bool = False,
 ) -> dict:
-    """Build yt-dlp options using TLS impersonation when a supported target is available."""
+    """Build yt-dlp options targeting specific YouTube player clients and formats."""
     opts = {
         "format": fmt,
         "outtmpl": out_tmpl,
@@ -222,8 +221,6 @@ def _yt_opts_for_client(
     }
     if clients:
         opts["extractor_args"] = {"youtube": {"player_client": clients}}
-    if impersonate:
-        opts["impersonate"] = "chrome"
     cookie_file = _get_cookie_file()
     if cookie_file:
         opts["cookiefile"] = str(cookie_file)
@@ -237,11 +234,9 @@ def _yt_opts_for_client(
 
 
 def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
-    """Downloads a streaming URL using android/mobile clients to reliably bypass bot detection."""
-    import yt_dlp
+    """Downloads a streaming URL using mobile/web clients with cookie authentication."""
+    import yt_dlp, traceback
     out_tmpl = str(d / "source.%(ext)s")
-    with yt_dlp.YoutubeDL({"quiet": True}) as probe:
-        chrome_impersonation_available = probe._impersonate_target_available("chrome")
 
     def _hook(h):
         if progress_cb and h.get("status") == "downloading":
@@ -251,8 +246,7 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
                 progress_cb(min(0.95, downloaded / total))
 
     # High-definition with multi-client failover.
-    # Pairing mobile clients with 'web' ensures player JavaScript is always loaded for signature deciphering,
-    # preventing yt-dlp's AssertionError: '_construct_player_url must take one of player_id or player_url'.
+    # Pairing mobile clients with 'web' ensures player JavaScript is always loaded for signature deciphering.
     client_configs = [
         # Strategy 1: Default yt-dlp client negotiation with cookies (safest and standard)
         (None,               "bestvideo*+bestaudio/best/b"),
@@ -268,9 +262,7 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
 
     last_exc: Exception | None = None
     for clients, fmt in client_configs:
-        opts = _yt_opts_for_client(
-            clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES, chrome_impersonation_available,
-        )
+        opts = _yt_opts_for_client(clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -281,6 +273,7 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
             else:
                 last_exc = RuntimeError(f"Client {clients} finished without downloading output file.")
         except Exception as e:
+            traceback.print_exc()
             last_exc = e
             # Clean up partial download before retrying with next client
             for f in d.glob("*"):
