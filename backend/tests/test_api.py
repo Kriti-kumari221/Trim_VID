@@ -114,6 +114,22 @@ def test_size_limit(sample, monkeypatch):
     assert up(sample).status_code == 413
 
 
+def test_ytdlp_omits_unavailable_impersonation_target(monkeypatch):
+    monkeypatch.setattr(main, "_get_cookie_file", lambda: None)
+
+    opts = main._yt_opts_for_client(None, "best", "source.%(ext)s", None, 1024)
+
+    assert "impersonate" not in opts
+
+
+def test_ytdlp_uses_chrome_impersonation_when_available(monkeypatch):
+    monkeypatch.setattr(main, "_get_cookie_file", lambda: None)
+
+    opts = main._yt_opts_for_client(None, "best", "source.%(ext)s", None, 1024, True)
+
+    assert opts["impersonate"] == "chrome"
+
+
 def test_google_drive_zip_import(monkeypatch):
     from app import gdrive_service
 

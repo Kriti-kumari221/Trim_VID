@@ -165,8 +165,11 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int) -> dict:
-    """Build yt-dlp options targeting specific YouTube player clients with TLS browser impersonation."""
+def _yt_opts_for_client(
+    clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int,
+    impersonate: bool = False,
+) -> dict:
+    """Build yt-dlp options using TLS impersonation when a supported target is available."""
     opts = {
         "format": fmt,
         "outtmpl": out_tmpl,
@@ -178,7 +181,6 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
         "geo_bypass": True,
         "max_filesize": max_bytes,
         "progress_hooks": [hook] if hook else [],
-        "impersonate": "chrome",  # Uses curl-cffi to forge Chrome's TLS fingerprint (crucial on datacenter IPs)
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
@@ -186,6 +188,8 @@ def _yt_opts_for_client(clients: Optional[list[str]], fmt: str, out_tmpl: str, h
     }
     if clients:
         opts["extractor_args"] = {"youtube": {"player_client": clients}}
+    if impersonate:
+        opts["impersonate"] = "chrome"
     cookie_file = _get_cookie_file()
     if cookie_file:
         opts["cookiefile"] = str(cookie_file)
@@ -202,6 +206,8 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
     """Downloads a streaming URL using android/mobile clients to reliably bypass bot detection."""
     import yt_dlp
     out_tmpl = str(d / "source.%(ext)s")
+    with yt_dlp.YoutubeDL({"quiet": True}) as probe:
+        chrome_impersonation_available = probe._impersonate_target_available("chrome")
 
     def _hook(h):
         if progress_cb and h.get("status") == "downloading":
@@ -227,7 +233,9 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
 
     last_exc: Exception | None = None
     for clients, fmt in client_configs:
-        opts = _yt_opts_for_client(clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES)
+        opts = _yt_opts_for_client(
+            clients, fmt, out_tmpl, _hook, MAX_UPLOAD_BYTES, chrome_impersonation_available,
+        )
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
