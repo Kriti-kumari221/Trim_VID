@@ -248,6 +248,9 @@ def _yt_opts_for_client(
             if m:
                 proxy = m.group(0)
         opts["proxy"] = proxy
+        print(f"[yt-dlp] Using proxy: {proxy.split('@')[-1] if '@' in proxy else proxy}")
+    else:
+        print("[yt-dlp] No proxy configured.")
     return opts
 
 
