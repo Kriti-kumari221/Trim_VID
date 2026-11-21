@@ -255,25 +255,26 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
                 progress_cb(min(0.95, downloaded / total))
 
     # Multi-strategy failover to bypass YouTube datacenter bot verification on cloud hosts:
-    # 1. Android client skipping web configs (bypasses SABR/bot checks on datacenter IPs)
-    # 2. iOS client skipping web configs
-    # 3. TV / TV Samsung client with cookies
-    # 4. Standard client negotiation with cookies
-    # 5. Fallback single stream (b/best)
+    # YouTube datacenter blocks happen when fetching initial webpage or desktop web player configs.
+    # We test non-web clients and skip initial webpage / configs to prevent the SABR bot challenge.
     client_configs = [
-        # Strategy 1: Android native client (does not trigger web bot challenge on datacenter IPs)
-        (["android"],         ["web", "configs"], False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 2: iOS native client
-        (["ios"],             ["web", "configs"], False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 3: TV client with cookies
-        (["tv"],              None,               True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 4: Standard yt-dlp client negotiation with cookies
-        (None,                None,               True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 5: Mobile Web + Web with cookies
-        (["mweb", "web"],     None,               True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 6: Single stream fallback
-        (["android"],         ["web", "configs"], False, "b/best"),
-        (None,                None,               True,  "b/best"),
+        # Strategy 1: TV Samsung client skipping webpage, configs and initial data (no bot challenge on datacenter IPs)
+        (["tv_samsung"],             ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 2: TV Samsung with TV client
+        (["tv_samsung", "tv"],       ["webpage", "configs"],                 False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 3: Android native client skipping webpage, configs and initial data
+        (["android"],                ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 4: iOS native client skipping webpage, configs and initial data
+        (["ios"],                    ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
+        # Strategy 5: TV client with cookies
+        (["tv", "tv_samsung"],       None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 6: Standard yt-dlp client negotiation with cookies
+        (None,                       None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 7: Mobile Web + Web with cookies
+        (["mweb", "web"],            None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 8: Single stream fallback without cookies
+        (["tv_samsung", "android"],  ["webpage", "configs"],                 False, "b/best"),
+        (None,                       None,                                   True,  "b/best"),
     ]
 
     last_exc: Exception | None = None
