@@ -236,8 +236,17 @@ def _yt_opts_for_client(
         else:
             print(f"[yt-dlp] WARNING: No cookie file found! YTDLP_COOKIES is empty and no cookies.txt found in disk.")
 
-    proxy = os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+    proxy = (os.getenv("YTDLP_PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or "").strip()
+    # Strip any accidental wrapping quotes e.g. "http://..." or 'http://...'
+    if proxy.startswith(('"', "'")) and proxy.endswith(('"', "'")):
+        proxy = proxy[1:-1].strip()
     if proxy:
+        # Also clean up curl command prefix if pasted by accident (e.g. `curl --proxy "http://..."`)
+        if "--proxy" in proxy:
+            import re
+            m = re.search(r'https?://[^\s"\']+', proxy)
+            if m:
+                proxy = m.group(0)
         opts["proxy"] = proxy
     return opts
 
