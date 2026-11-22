@@ -270,23 +270,22 @@ def _download_ytdlp(url: str, d: Path, progress_cb=None) -> tuple[Path, str]:
     # YouTube datacenter blocks happen when fetching initial webpage or desktop web player configs.
     # We test non-web clients and skip initial webpage / configs to prevent the SABR bot challenge.
     client_configs = [
-        # Strategy 1: TV Samsung client skipping webpage, configs and initial data (no bot challenge on datacenter IPs)
-        (["tv_samsung"],             ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 2: TV Samsung with TV client
-        (["tv_samsung", "tv"],       ["webpage", "configs"],                 False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 3: Android native client skipping webpage, configs and initial data
-        (["android"],                ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 4: iOS native client skipping webpage, configs and initial data
-        (["ios"],                    ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
-        # Strategy 5: TV client with cookies
-        (["tv", "tv_samsung"],       None,                                   True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 6: Standard yt-dlp client negotiation with cookies
+        # Strategy 1: Standard web client with user's authenticated cookies
+        (["web"],                    None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 2: Web Safari client with cookies
+        (["web_safari"],             None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 3: Mobile web client with cookies
+        (["mweb"],                   None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 4: Standard default client negotiation with cookies
         (None,                       None,                                   True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 7: Mobile Web + Web with cookies
-        (["mweb", "web"],            None,                                   True,  "bestvideo*+bestaudio/best/b"),
-        # Strategy 8: Single stream fallback without cookies
-        (["tv_samsung", "android"],  ["webpage", "configs"],                 False, "b/best"),
+        # Strategy 5: TV client with cookies
+        (["tv"],                     None,                                   True,  "bestvideo*+bestaudio/best/b"),
+        # Strategy 6: Single stream fallback with cookies
+        (["web"],                    None,                                   True,  "b/best"),
         (None,                       None,                                   True,  "b/best"),
+        # Strategy 7: TV Samsung without cookies (in case unauthenticated succeeds)
+        (["tv_samsung"],             ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
+        (["android"],                ["webpage", "configs", "initial_data"], False, "bestvideo*+bestaudio/best/b"),
     ]
 
     last_exc: Exception | None = None
