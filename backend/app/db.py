@@ -136,7 +136,31 @@ def init_db():
         created_at REAL,
         updated_at REAL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        full_name TEXT DEFAULT '',
+        created_at REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at REAL,
+        expires_at REAL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
     """)
+
+    # Schema migration: Add user_id column to projects if it doesn't exist
+    try:
+        c.execute("ALTER TABLE projects ADD COLUMN user_id TEXT;")
+    except sqlite3.OperationalError:
+        pass # Column already exists
+
     conn.commit()
     conn.close()
 

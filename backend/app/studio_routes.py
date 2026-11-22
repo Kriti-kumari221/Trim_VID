@@ -8,11 +8,11 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
-from fastapi import APIRouter, HTTPException, UploadFile, File, Response
+from fastapi import APIRouter, HTTPException, UploadFile, File, Response, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import config, db, projects_service, clips_service, gdrive_service
+from . import config, db, projects_service, clips_service, gdrive_service, auth_service
 from . import transcription_service, ai_analyzer_service, music_service, subtitles_service, enhancement_service, assembly_service
 
 router = APIRouter(prefix="/api", tags=["studio"])
@@ -23,6 +23,15 @@ _studio_pool = ThreadPoolExecutor(max_workers=2)
 _STUDIO_TASKS: Dict[str, Dict] = {}
 
 # ----------------- Models -----------------
+class RegisterReq(BaseModel):
+    email: str
+    password: str
+    full_name: Optional[str] = ""
+
+class LoginReq(BaseModel):
+    email: str
+    password: str
+
 class CreateProjectReq(BaseModel):
     name: str
     folder: str = "General"
@@ -130,14 +139,53 @@ class GDriveExtractReq(BaseModel):
     zip_path: str
     selected_filenames: List[str]
 
+# ----------------- Auth Helpers & Routes -----------------
+def _get_current_user(authorization: Optional[str] = Header(None)) -> Optional[Dict[str, Any]]:
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "").strip()
+    return auth_service.get_user_by_token(token)
+
+@router.post("/auth/register")
+def register_route(req: RegisterReq):
+    try:
+        return auth_service.register_user(req.email, req.password, req.full_name or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@router.post("/auth/login")
+def login_route(req: LoginReq):
+    try:
+        return auth_service.login_user(req.email, req.password)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@router.get("/auth/me")
+def me_route(authorization: Optional[str] = Header(None)):
+    user = _get_current_user(authorization)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    return {"user": user}
+
+@router.post("/auth/logout")
+def logout_route(authorization: Optional[str] = Header(None)):
+    if authorization:
+        token = authorization.replace("Bearer ", "").strip()
+        auth_service.logout_session(token)
+    return {"success": True}
+
 # ----------------- Projects -----------------
 @router.get("/projects")
-def get_projects(search: str = "", folder: str = ""):
-    return projects_service.list_projects(search, folder)
+def get_projects(search: str = "", folder: str = "", authorization: Optional[str] = Header(None)):
+    user = _get_current_user(authorization)
+    user_id = user["id"] if user else None
+    return projects_service.list_projects(search, folder, user_id=user_id)
 
 @router.post("/projects")
-def create_project_route(req: CreateProjectReq):
-    return projects_service.create_project(req.name, req.folder, req.video_id)
+def create_project_route(req: CreateProjectReq, authorization: Optional[str] = Header(None)):
+    user = _get_current_user(authorization)
+    user_id = user["id"] if user else None
+    return projects_service.create_project(req.name, req.folder, req.video_id, user_id=user_id)
 
 @router.get("/projects/{project_id}")
 def get_project_route(project_id: str):

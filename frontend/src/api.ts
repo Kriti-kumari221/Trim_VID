@@ -145,7 +145,40 @@ export type VideoAssessment = {
   thumbnail_url: string | null; path: string
 };
 
+export type User = {
+  id: string;
+  email: string;
+  full_name?: string;
+  created_at: number;
+};
+
 const envBase = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
+
+export const getAuthToken = (): string | null => {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("cliptrim_auth_token");
+  }
+  return null;
+};
+
+export const setAuthToken = (token: string | null) => {
+  if (typeof window !== "undefined") {
+    if (token) {
+      localStorage.setItem("cliptrim_auth_token", token);
+    } else {
+      localStorage.removeItem("cliptrim_auth_token");
+    }
+  }
+};
+
+const getAuthHeaders = (): Record<string, string> => {
+  const token = getAuthToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+};
 
 export const apiUrl = (path: string) => {
   if (/^https?:\/\//i.test(path)) return path;
@@ -168,13 +201,22 @@ async function j<T>(r: Response): Promise<T> {
   return b as T;
 }
 
+const authFetch = (u: string, options: RequestInit = {}) => {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers || {});
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return fetch(apiUrl(u), { ...options, headers });
+};
+
 const post = (u: string, body?: unknown) =>
-  fetch(apiUrl(u), { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  authFetch(u, { method: "POST", headers: getAuthHeaders(), body: body ? JSON.stringify(body) : undefined });
 
 const put = (u: string, body?: unknown) =>
-  fetch(apiUrl(u), { method: "PUT", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  authFetch(u, { method: "PUT", headers: getAuthHeaders(), body: body ? JSON.stringify(body) : undefined });
 
-const del = (u: string) => fetch(apiUrl(u), { method: "DELETE" });
+const del = (u: string) => authFetch(u, { method: "DELETE" });
 
 export const api = {
   // Existing baseline methods
@@ -213,9 +255,21 @@ export const api = {
   job: (id: string) => fetch(apiUrl(`/api/jobs/${id}`)).then(j<Job>),
   cancel: (id: string) => post(`/api/jobs/${id}/cancel`).then(j<Job>),
 
+  // User Authentication & Account
+  auth: {
+    register: (email: string, password: string, full_name = "") =>
+      post("/api/auth/register", { email, password, full_name }).then(j<{ token: string; user: User }>),
+    login: (email: string, password: string) =>
+      post("/api/auth/login", { email, password }).then(j<{ token: string; user: User }>),
+    me: () =>
+      authFetch("/api/auth/me").then(j<{ user: User }>),
+    logout: () =>
+      post("/api/auth/logout").then(j<{ success: boolean }>),
+  },
+
   // Projects
   projects: {
-    list: (search = "", folder = "") => fetch(apiUrl(`/api/projects?search=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}`)).then(j<Project[]>),
+    list: (search = "", folder = "") => authFetch(`/api/projects?search=${encodeURIComponent(search)}&folder=${encodeURIComponent(folder)}`).then(j<Project[]>),
     create: (name: string, folder = "General", video_id?: string) => post("/api/projects", { name, folder, video_id }).then(j<Project>),
     get: (id: string) => fetch(apiUrl(`/api/projects/${id}`)).then(j<Project>),
     update: (id: string, updates: Partial<Project>) => put(`/api/projects/${id}`, updates).then(j<Project>),

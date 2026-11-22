@@ -6,11 +6,15 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from . import db, config
 
-def list_projects(search: str = "", folder: str = "") -> List[Dict[str, Any]]:
+def list_projects(search: str = "", folder: str = "", user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = db.get_connection()
     c = conn.cursor()
     query = "SELECT * FROM projects WHERE 1=1"
     params = []
+    if user_id:
+        # If user is logged in, show user projects plus any unassigned guest projects
+        query += " AND (user_id = ? OR user_id IS NULL OR user_id = '')"
+        params.append(user_id)
     if search:
         query += " AND (name LIKE ? OR video_name LIKE ?)"
         params.extend([f"%{search}%", f"%{search}%"])
@@ -44,7 +48,7 @@ def list_projects(search: str = "", folder: str = "") -> List[Dict[str, Any]]:
     conn.close()
     return projects
 
-def create_project(name: str, folder: str = "General", video_id: Optional[str] = None) -> Dict[str, Any]:
+def create_project(name: str, folder: str = "General", video_id: Optional[str] = None, user_id: Optional[str] = None) -> Dict[str, Any]:
     project_id = uuid.uuid4().hex
     now = time.time()
     video_name = ""
@@ -64,9 +68,9 @@ def create_project(name: str, folder: str = "General", video_id: Optional[str] =
     conn = db.get_connection()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO projects (id, name, folder, video_id, video_name, video_duration, thumbnail_url, status, settings_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', '{}', ?, ?)
-    """, (project_id, name, folder or "General", video_id, video_name, video_duration, thumbnail_url, now, now))
+        INSERT INTO projects (id, name, folder, video_id, video_name, video_duration, thumbnail_url, status, settings_json, user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', '{}', ?, ?, ?)
+    """, (project_id, name, folder or "General", video_id, video_name, video_duration, thumbnail_url, user_id, now, now))
     
     # Create default folders
     for f_name, sort in [("Introduction", 1), ("Main Story", 2), ("Conclusion", 3)]:

@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Scissors, Upload, Link2, Play, Pause, Volume2, VolumeX, Maximize, ZoomIn, ZoomOut,
   Download, X, ChevronLeft, ChevronRight, Home, HelpCircle, Settings, Loader2, Eye,
-  Film, Folder, Mic, Sparkles, Music, Type, HardDrive, Plus, Check, RefreshCw, RotateCcw, FileText
+  Film, Folder, Mic, Sparkles, Music, Type, HardDrive, Plus, Check, RefreshCw, RotateCcw, FileText, User as UserIcon
 } from "lucide-react";
 
-import { api, apiUrl, Meta, Job, Loaded, Project, ProjectClip, MusicTrack } from "./api";
+import { api, apiUrl, Meta, Job, Loaded, Project, ProjectClip, MusicTrack, User } from "./api";
 import { ProjectsModal } from "./components/ProjectsModal";
 import { GDriveModal } from "./components/GDriveModal";
+import { AuthModal } from "./components/AuthModal";
 import { TranscriptStudioView } from "./components/TranscriptStudioView";
 import { AIScriptStudioView } from "./components/AIScriptStudioView";
 import { MultiClipList } from "./components/MultiClipList";
@@ -85,6 +86,22 @@ export default function App() {
   // Active studio tab
   type StudioTab = "editor" | "auto_shorts" | "transcript" | "scripts" | "music" | "exports";
   const [activeTab, setActiveTab] = useState<StudioTab>("editor");
+
+  // User Authentication State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Check current session on mount
+  useEffect(() => {
+    api.auth.me()
+      .then((res) => {
+        if (res && res.user) setCurrentUser(res.user);
+      })
+      .catch(() => {
+        // Not logged in or guest session
+        setCurrentUser(null);
+      });
+  }, []);
 
   // Video and timeline states
   const [vid, setVid] = useState<string | null>(null);
@@ -621,6 +638,23 @@ export default function App() {
             <HardDrive size={14} className="text-blue-400" />
             Drive / ZIP
           </button>
+          
+          {/* User Account / Auth Button */}
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-all ${
+              currentUser
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"
+            }`}
+            title={currentUser ? `Logged in as ${currentUser.email}` : "Sign In or Create Account"}
+          >
+            <UserIcon size={14} className={currentUser ? "text-emerald-400" : "text-amber-400"} />
+            <span className="max-w-[110px] truncate">
+              {currentUser ? (currentUser.full_name || currentUser.email.split("@")[0]) : "Sign In"}
+            </span>
+          </button>
+
           <button
             onClick={() => setPanel(panel === "settings" ? "" : "settings")}
             className="rounded-md border border-line bg-panel p-1.5 text-mute hover:text-paper"
@@ -2025,6 +2059,25 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* User Authentication & Account Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        currentUser={currentUser}
+        onUserChange={(user) => {
+          setCurrentUser(user);
+          // Refresh project list when user logs in or out
+          api.projects.list()
+            .then((list) => {
+              if (list && list.length > 0 && !project) {
+                // If no project selected, select the first available project
+                api.projects.get(list[0].id).then(setProject).catch(() => {});
+              }
+            })
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }
