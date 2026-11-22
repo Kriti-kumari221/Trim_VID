@@ -12,9 +12,13 @@ def list_projects(search: str = "", folder: str = "", user_id: Optional[str] = N
     query = "SELECT * FROM projects WHERE 1=1"
     params = []
     if user_id:
-        # If user is logged in, show user projects plus any unassigned guest projects
-        query += " AND (user_id = ? OR user_id IS NULL OR user_id = '')"
+        # Strict user isolation: Logged-in users see ONLY their own projects
+        query += " AND user_id = ?"
         params.append(user_id)
+    else:
+        # Guests see unassigned projects or nothing
+        query += " AND (user_id IS NULL OR user_id = '')"
+
     if search:
         query += " AND (name LIKE ? OR video_name LIKE ?)"
         params.extend([f"%{search}%", f"%{search}%"])

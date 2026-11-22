@@ -263,22 +263,25 @@ export default function App() {
   const dur = meta?.duration ?? 0;
   const frame = meta && meta.fps > 0 ? 1 / meta.fps : 0.04;
 
-  // Initialize config, load or create default project
+  // Initialize config & music tracks
   useEffect(() => {
     api.config().then(setCfg).catch(() => {});
     api.music.list().then(setMusicTracks).catch(() => {});
+  }, []);
 
-    // Load recent project or create default
+  // Load user projects whenever currentUser changes or on initial auth check
+  useEffect(() => {
     api.projects.list().then((list) => {
       if (list.length > 0) {
         loadFullProject(list[0].id);
       } else {
-        api.projects.create("Untitled Studio Project", "General").then((p) => {
-          setProject(p);
-        });
+        // Only if logged in or fresh guest session with no projects
+        setProject(null);
+        setVid(null);
+        setMeta(null);
       }
-    });
-  }, []);
+    }).catch(() => {});
+  }, [currentUser?.id]);
 
   const loadFullProject = async (projectId: string) => {
     try {
