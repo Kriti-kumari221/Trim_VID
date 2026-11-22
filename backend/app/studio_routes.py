@@ -786,6 +786,23 @@ def proceed_ai_route(job_id: str, req: ProceedAISelectionReq):
     except Exception as e:
         raise HTTPException(500, f"Failed to proceed to AI selection: {e}")
 
+class GenerateShortScriptReq(BaseModel):
+    target_duration: Optional[int] = 50
+    custom_transcript: Optional[List[Dict[str, Any]]] = None
+
+@router.post("/auto-shorts/jobs/{job_id}/generate-short-script")
+def generate_short_script_route(job_id: str, req: GenerateShortScriptReq):
+    from . import auto_shorts_service
+    try:
+        res = auto_shorts_service.generate_single_short_sequence(
+            job_id=job_id,
+            target_duration=req.target_duration or 50,
+            custom_transcript=req.custom_transcript
+        )
+        return {"status": "short_script_generated", "clip": res}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to generate short script: {e}")
+
 @router.post("/auto-shorts/jobs/{job_id}/render")
 def render_auto_shorts_route(job_id: str, req: RenderApprovedReq):
     from . import auto_shorts_service

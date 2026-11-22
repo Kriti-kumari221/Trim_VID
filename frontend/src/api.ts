@@ -412,6 +412,8 @@ export const api = {
       error?: string;
     }>),
     proceedToAI: (jobId: string, customTranscript?: any[]) => post(`/api/auto-shorts/jobs/${jobId}/proceed-ai`, { custom_transcript: customTranscript }).then(j<any>),
+    generateShortScript: (jobId: string, targetDuration = 50, customTranscript?: any[]) =>
+      post(`/api/auto-shorts/jobs/${jobId}/generate-short-script`, { target_duration: targetDuration, custom_transcript: customTranscript }).then(j<{ status: string; clip: any }>),
     renderApproved: (jobId: string, clips: any[], fontFile?: string, casing = "uppercase", animationEffect = "scale_pop") =>
       post(`/api/auto-shorts/jobs/${jobId}/render`, { clips, font_file: fontFile, casing, animation_effect: animationEffect }).then(j<any>),
     parseScript: (scriptText: string) => post("/api/auto-shorts/parse-script", { script_text: scriptText }).then(j<{ overall_range: [number, number] | null; scenes: any[]; total_scenes: number }>),

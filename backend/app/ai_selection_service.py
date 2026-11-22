@@ -182,6 +182,69 @@ Selection & Scripting Rules:
 6. Output Format: Return strictly a valid JSON array matching the requested schema.
 """
 
+def create_short_script_from_transcript(
+    transcript_segments: List[Dict[str, Any]],
+    target_duration: int = 50,
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Creates a single, highly engaging, continuous short script sequence
+    from a long discourse transcript, ensuring tight narrative flow.
+    """
+    if not transcript_segments:
+        raise ValueError("Transcript is empty")
+
+    clips = select_viral_clips_from_transcript(
+        transcript_segments=transcript_segments,
+        num_clips=1,
+        target_min_s=max(25, target_duration - 15),
+        target_max_s=min(90, target_duration + 15),
+        api_key=api_key
+    )
+
+    if not clips:
+        raise ValueError("Could not extract short script from transcript")
+
+    best = clips[0]
+    c_start = float(best.get("start", 0))
+    c_end = float(best.get("end", c_start + target_duration))
+
+    # Collect all exact subtitle segments falling inside this short sequence
+    subs = []
+    for s in transcript_segments:
+        s_start = float(s.get("start", 0))
+        s_dur = float(s.get("duration", 2.0))
+        s_end = s_start + s_dur
+        if s_end >= c_start and s_start <= c_end:
+            subs.append({
+                "start": max(round(s_start - c_start, 2), 0.0),
+                "end": max(round(s_end - c_start, 2), 0.2),
+                "text": s.get("text", "").strip()
+            })
+
+    script_text = best.get("script_content") or best.get("summary") or " ".join(item["text"] for item in subs)
+
+    return {
+        "start": c_start,
+        "end": c_end,
+        "duration": round(c_end - c_start, 2),
+        "hook_title": best.get("hook_title", "Viral Discourse Short"),
+        "virality_score": best.get("virality_score", 95),
+        "reason": best.get("reason", "Unified continuous discourse narrative"),
+        "script_content": script_text,
+        "subtitles": subs
+    }
+Your job is to identify high-impact, provocative, profound moments from the transcript and shape them into engaging Short clips.
+
+Selection & Scripting Rules:
+1. Duration: 30 to 75 seconds per clip (ideal for YouTube Shorts / Reels retention).
+2. Clean Hook: Every clip must open with a curiosity-inducing, punchy hook in the first 3 seconds.
+3. Sentence Boundaries: Start and end strictly on natural sentence/thought boundaries. Never cut mid-thought.
+4. Language Preservation: Retain the native spoken language (Hindi/Devanagari, Hinglish, or English) without distorting the speaker's original words.
+5. Virality Score & Reason: Assess emotional resonance, counter-intuitive insight, and hook strength (1-100).
+6. Output Format: Return strictly a valid JSON array matching the requested schema.
+"""
+
 def select_viral_clips_from_transcript(
     transcript_segments: List[Dict[str, Any]],
     num_clips: int = 5,

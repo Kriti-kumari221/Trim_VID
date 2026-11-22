@@ -285,6 +285,62 @@ def proceed_to_ai_selection(job_id: str, custom_transcript: Optional[List[Dict[s
         logger.error(f"AI selection error: {e}", exc_info=True)
         update_job_status(job_id, status="error", error=str(e), step_detail="AI Clip Selection error.")
 
+def generate_single_short_sequence(job_id: str, target_duration: int = 50, custom_transcript: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Generates a single continuous short script sequence from the discourse transcript."""
+    job = get_auto_shorts_job(job_id)
+    if not job:
+        raise ValueError("Job not found")
+
+    segments = custom_transcript or job.get("transcript", [])
+    if not segments:
+        raise ValueError("No transcript available for job")
+
+    short_data = ai_selection_service.create_short_script_from_transcript(
+        transcript_segments=segments,
+        target_duration=target_duration
+    )
+
+    # Compute speaker face crop for this sequence
+    p = projects_service.get_project(job["project_id"])
+    crop_rect = {}
+    if p and p.get("video_id"):
+        try:
+            src_dir = config.DATA_DIR / p["video_id"]
+            meta = json.loads((src_dir / "meta.json").read_text(encoding="utf-8"))
+            final_src = src_dir / meta["source"]
+            crop_rect = face_tracker_service.detect_speaker_face_crop(
+                video_path=final_src,
+                start_time=float(short_data["start"]),
+                end_time=float(short_data["end"])
+            )
+        except Exception as e:
+            logger.warning(f"Face crop fallback for sequence: {e}")
+
+    single_clip = {
+        "id": uuid.uuid4().hex,
+        "start": short_data["start"],
+        "end": short_data["end"],
+        "hook_title": short_data["hook_title"],
+        "virality_score": short_data["virality_score"],
+        "reason": short_data["reason"],
+        "summary": short_data["script_content"],
+        "script_content": short_data["script_content"],
+        "custom_subtitles": short_data["subtitles"],
+        "crop_rect": crop_rect,
+        "accepted": True
+    }
+
+    update_job_status(
+        job_id,
+        status="awaiting_review",
+        stage="review",
+        progress=0.75,
+        step_detail="Short Script Sequence generated! You can edit subtitles and render.",
+        clips=[single_clip],
+        script_content=short_data["script_content"]
+    )
+    return single_clip
+
 def render_approved_auto_shorts(
     job_id: str,
     approved_clips: List[Dict[str, Any]],
@@ -337,7 +393,7 @@ def render_approved_auto_shorts(
             end_time=float(clip["end"]),
             template_id=template_id,
             crop_rect=clip.get("crop_rect"),
-            custom_subtitles=clip.get("custom_subtitles"),
+            custom_subtitles=clip.get("custom_subtitles") or clip.get("script_content") or clip.get("summary"),
             font_file=font_file,
             casing=casing,
             animation_effect=animation_effect

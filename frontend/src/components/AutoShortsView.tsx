@@ -127,6 +127,22 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
     }
   };
 
+  const handleGenerateShortScript = async (targetDuration = 50) => {
+    if (!jobId) return;
+    setLoading(true);
+    try {
+      const res = await api.autoShorts.generateShortScript(jobId, targetDuration, transcriptSegments);
+      if (res && res.clip) {
+        setClips([res.clip]);
+        setCurrentViewTab("clips");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to generate short script");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRenderShorts = async () => {
     if (!jobId) return;
     const accepted = clips.filter((c) => c.accepted !== false);
@@ -570,15 +586,15 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                   className="rounded-md border border-line bg-panel px-3 py-1.5 text-xs font-semibold text-paper hover:bg-canvas flex items-center gap-1.5"
                 >
                   <Edit3 size={13} />
-                  Edit Script
+                  Inspect & Edit Script
                 </button>
                 <button
-                  onClick={handleProceedToAI}
+                  onClick={() => handleGenerateShortScript(50)}
                   disabled={loading}
                   className="rounded-md bg-amber-400 px-3.5 py-1.5 text-xs font-bold text-ink hover:bg-amber-300 flex items-center gap-1.5 shadow"
                 >
-                  Proceed to AI Selection
-                  <ArrowRight size={13} />
+                  <Sparkles size={13} />
+                  Generate Short Script
                 </button>
               </div>
             </div>
@@ -608,11 +624,20 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 Paste Custom Transcript
               </button>
               <button
+                onClick={() => handleGenerateShortScript(50)}
+                disabled={loading}
+                className="rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold px-4 py-2 text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+                title="Generates a single continuous short script sequence from this transcript"
+              >
+                <Sparkles size={14} />
+                Generate Short Script (Single Sequence)
+              </button>
+              <button
                 onClick={handleProceedToAI}
                 disabled={loading}
-                className="rounded-lg bg-amber-400 hover:bg-amber-300 text-ink font-bold px-4 py-2 text-xs flex items-center gap-1.5 shadow-md shadow-amber-400/20"
+                className="rounded-lg border border-amber-400/50 bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 font-bold px-3.5 py-2 text-xs flex items-center gap-1.5"
               >
-                Save & Proceed to AI Clips
+                Multiple AI Clips
                 <ArrowRight size={14} />
               </button>
             </div>
@@ -721,21 +746,32 @@ export function AutoShortsView({ projectId, defaultUrl = "", onClipsGenerated, o
                 className="rounded-lg bg-emerald-500 hover:bg-emerald-400 text-ink font-bold px-4 py-2 text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
               >
                 <Check size={14} />
-                Render Approved Shorts ({clips.filter((c) => c.accepted !== false).length})
+                Render Short ({clips.filter((c) => c.accepted !== false).length})
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={clips.length === 1 ? "grid grid-cols-1 max-w-3xl mx-auto" : "grid grid-cols-1 md:grid-cols-2 gap-4"}>
             {clips.map((clip, idx) => (
               <div
                 key={clip.id || idx}
                 className={`border rounded-xl p-4 transition-all ${
                   clip.accepted !== false
-                    ? "border-amber-500/40 bg-panel"
+                    ? "border-amber-500/40 bg-panel shadow-lg"
                     : "border-line bg-canvas opacity-40"
                 }`}
               >
+                {clips.length === 1 && (
+                  <div className="mb-3 flex items-center justify-between pb-2 border-b border-line/60">
+                    <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                      <Sparkles size={13} />
+                      Unified Short Script Sequence
+                    </span>
+                    <span className="text-[10px] bg-amber-400/10 text-amber-300 border border-amber-400/30 px-2 py-0.5 rounded-full font-mono">
+                      Single Video Output
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="flex items-center gap-2">
