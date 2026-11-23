@@ -199,6 +199,26 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
+def _get_local_po_token(client: str = "web") -> Optional[str]:
+    """Fetches a fresh Proof-of-Origin Token (POT) from local bgutil-ytdlp-pot-provider if running."""
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:4416/get_pot",
+            data=json.dumps({"client": client}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            token = data.get("poToken")
+            if token:
+                print(f"[yt-dlp] Obtained fresh PO Token from local POT server for client '{client}'")
+                return token
+    except Exception:
+        pass
+    return None
+
+
 def _yt_opts_for_client(
     clients: Optional[list[str]], fmt: str, out_tmpl: str, hook, max_bytes: int,
     player_skip: Optional[list[str]] = None, use_cookies: bool = True,
@@ -225,6 +245,13 @@ def _yt_opts_for_client(
         extractor_args["player_client"] = clients
     if player_skip:
         extractor_args["player_skip"] = player_skip
+
+    # Inject Proof-of-Origin Token if local POT provider is active
+    primary_client = clients[0] if clients else "web"
+    po_token = _get_local_po_token(primary_client)
+    if po_token:
+        extractor_args["po_token"] = [f"{primary_client}+{po_token}"]
+
     if extractor_args:
         opts["extractor_args"] = {"youtube": extractor_args}
 
